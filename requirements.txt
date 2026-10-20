@@ -1,0 +1,7 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic-settings>=2.5.0
+sqlalchemy>=2.0.30
+pymysql>=1.1.0
+# MySQL 8 默认认证插件 caching_sha2_password 需要
+cryptography>=42.0.0
