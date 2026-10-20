@@ -63,16 +63,17 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 | `API_MAX_ROWS` | `5000` | 单次返回行数上限，请求里的 `max_rows` 会被压到该值 |
 | `API_QUERY_TIMEOUT_MS` | `30000` | 查询超时（毫秒），通过 `MAX_EXECUTION_TIME` 生效，需 MySQL 5.7.8+ |
 | `API_CORS_ORIGINS` | `*` | 允许的来源，逗号分隔；上线建议收紧成具体域名 |
+| `API_CORS_ALLOW_CREDENTIALS` | `false` | 是否允许跨域携带 Cookie / Authorization |
 | `API_DATABASE_URL` | 无 | 直接指定 SQLAlchemy URL，优先级高于 `HK_DB_MYSQL_*`（测试用） |
 
 ---
 
 ## 接口
 
-### 1. 执行 SQL — `POST /api/data/sql`
+### 1. 执行 SQL — `POST /api/v09/data/sql`
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/data/sql \
+curl -X POST http://127.0.0.1:8000/api/v09/data/sql \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "SELECT game_name, download_count FROM dws_taptap_download_daily WHERE dt = :dt ORDER BY download_count DESC",
@@ -103,7 +104,7 @@ curl -X POST http://127.0.0.1:8000/api/data/sql \
 
 `total` 是本次返回的行数，`truncated` 为 `true` 表示命中上限、结果被截断（还有更多行）。
 
-### 2. 列出表 — `GET /api/data/tables`
+### 2. 列出表 — `GET /api/v09/data/tables`
 
 MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口查的表到底在不在」。
 
@@ -113,6 +114,24 @@ MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口�
 |------|------|
 | `GET /health` | 进程状态 + 数据库配置是否齐全，**不连库** |
 | `GET /health/db` | 真正执行 `SELECT 1`，连不上返回 503 |
+
+---
+
+## 跨域（CORS）
+
+默认放开所有来源，前端本地开发（Vite、直奔 IP 调试）开箱可用：
+
+- 预检 `OPTIONS` 直接返回 200，`Access-Control-Max-Age: 600` 缓存 10 分钟，减少 OPTIONS 往返
+- 放行方法 `GET / POST / OPTIONS`，请求头不限制，所有响应（含 4xx / 5xx 错误）都会带 `Access-Control-Allow-Origin`
+- 只允许特定前端时设 `API_CORS_ORIGINS=https://ui.example.com,https://admin.example.com`
+- 前端要带 Cookie 或 `Authorization` 时，同时设 `API_CORS_ALLOW_CREDENTIALS=true`：此时浏览器规范不允许返回通配符 `*`，服务会自动回显请求来源，无需改成具体域名
+
+```bash
+# 验证预检
+curl -i -X OPTIONS http://127.0.0.1:8000/api/v09/data/sql   -H "Origin: http://localhost:5173"   -H "Access-Control-Request-Method: POST"   -H "Access-Control-Request-Headers: content-type"
+```
+
+> 通配符 + 凭据的组合只应在内网或受控环境下使用；公网部署请把 `API_CORS_ORIGINS` 收紧到具体域名。
 
 ---
 
@@ -154,7 +173,7 @@ everything-api/
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 9 个用例，用临时 SQLite 覆盖接口契约与安全校验
+pytest          # 12 个用例（含跨域预检/响应头），用临时 SQLite 覆盖接口契约与安全校验
 ruff check app tests
 ```
 

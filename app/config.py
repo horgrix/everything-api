@@ -40,8 +40,10 @@ class Settings(BaseSettings):
     api_max_rows: int = 5000
     # 查询超时（毫秒），仅 MySQL 生效
     api_query_timeout_ms: int = 30_000
-    # 逗号分隔的允许来源，默认 *
+    # 逗号分隔的允许来源，默认 *（放行所有来源）
     api_cors_origins: str = "*"
+    # 是否允许跨域携带 Cookie / Authorization（开启后不再回显通配符 *）
+    api_cors_allow_credentials: bool = False
 
     @property
     def cors_origins(self) -> list[str]:

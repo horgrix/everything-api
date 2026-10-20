@@ -25,7 +25,7 @@ from ..errors import (
 from ..schemas import SqlQueryRequest
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/data", tags=["data"])
+router = APIRouter(prefix="/api/v09/data", tags=["data"])
 
 
 @router.post("/sql", summary="直接执行 SQL")

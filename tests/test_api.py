@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-SQL_PATH = "/api/data/sql"
+PREFIX = "/api/v09/data"
+SQL_PATH = f"{PREFIX}/sql"
+TABLES_PATH = f"{PREFIX}/tables"
 
 
 def test_health(client):
@@ -68,6 +70,60 @@ def test_sql_empty_body_rejected(client):
 
 
 def test_list_tables(client):
-    body = client.get("/api/data/tables").json()
+    body = client.get(TABLES_PATH).json()
     assert body["code"] == 0
     assert "dws_taptap_download_daily" in body["data"]
+
+
+# ---------------- 跨域 ----------------
+
+ORIGIN = "http://localhost:5173"
+
+
+def test_cors_preflight(client):
+    resp = client.options(
+        SQL_PATH,
+        headers={
+            "Origin": ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "POST" in resp.headers["access-control-allow-methods"]
+    assert resp.headers["access-control-max-age"] == "600"
+
+
+def test_cors_header_on_success_and_error(client):
+    ok_resp = client.post(
+        SQL_PATH, json={"sql": "SELECT 1 AS v"}, headers={"Origin": ORIGIN}
+    )
+    assert ok_resp.status_code == 200
+    assert ok_resp.headers["access-control-allow-origin"] == "*"
+
+    guarded = client.post(
+        SQL_PATH,
+        json={"sql": "DELETE FROM dws_taptap_download_daily"},
+        headers={"Origin": ORIGIN},
+    )
+    assert guarded.status_code == 403
+    assert guarded.headers["access-control-allow-origin"] == "*"
+
+
+def test_cors_options_for_restricted_origins_and_credentials():
+    from app.config import Settings
+    from app.main import build_cors_options
+
+    restricted = build_cors_options(
+        Settings(api_cors_origins="https://a.example.com, https://b.example.com")
+    )
+    assert restricted["allow_origins"] == ["https://a.example.com", "https://b.example.com"]
+    assert restricted["allow_credentials"] is False
+
+    wildcard_with_credentials = build_cors_options(
+        Settings(api_cors_origins="*", api_cors_allow_credentials=True)
+    )
+    assert wildcard_with_credentials["allow_origin_regex"] == ".*"
+    assert wildcard_with_credentials["allow_credentials"] is True
+    assert "allow_origins" not in wildcard_with_credentials
