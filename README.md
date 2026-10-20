@@ -1,6 +1,6 @@
 # Everything API
 
-Everything 数据平台的查询服务：基于 **FastAPI + SQLAlchemy + MySQL**，对外提供「直接传 SQL」和「按表名条件查询」两类数据接口。
+Everything 数据平台的查询服务：基于 **FastAPI + SQLAlchemy + MySQL**，对外提供直接执行 SQL 的查询接口。
 
 - 连接信息全部来自环境变量，不落代码、不进仓库
 - 统一响应结构 `{code, message, data, total, truncated}`，与 `everything-ui` 现有前端契约一致
@@ -103,31 +103,11 @@ curl -X POST http://127.0.0.1:8000/api/data/sql \
 
 `total` 是本次返回的行数，`truncated` 为 `true` 表示命中上限、结果被截断（还有更多行）。
 
-### 2. 按表名查询 — `GET /api/data/{table}/query`
-
-所有条件都经过白名单校验后再拼装，表名/字段名不合法直接拒绝（不会把用户输入原样拼进 SQL）。
-
-| 参数 | 说明 |
-|------|------|
-| `fields` | 逗号分隔字段，默认 `*` |
-| `where` | JSON 数组：`[{"col":"price","op":">","value":100}]` |
-| `aggregate` | 聚合表达式：`SUM(download_count) AS total, COUNT(*) AS cnt` |
-| `group_by` | 逗号分隔分组字段 |
-| `order_by` | 排序：`dt DESC` 或 `total DESC` |
-| `limit` / `offset` | 分页，`limit` 会被压到 `API_MAX_ROWS` |
-| `with_count` | `true` 时额外返回满足条件的总行数（进 `total`） |
-
-`where` 支持的 `op`：`=`、`!=`、`<>`、`>`、`>=`、`<`、`<=`、`like`、`not like`、`in`、`not in`、`between`、`is null`、`is not null`。
-
-```bash
-curl "http://127.0.0.1:8000/api/data/dws_taptap_games/query?fields=game_name,download_count&where=%5B%7B%22col%22%3A%22download_count%22%2C%22op%22%3A%22%3E%3D%22%2C%22value%22%3A1000%7D%5D&order_by=download_count%20DESC&limit=20&with_count=true"
-```
-
-### 3. 列出表 — `GET /api/data/tables`
+### 2. 列出表 — `GET /api/data/tables`
 
 MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口查的表到底在不在」。
 
-### 4. 健康检查
+### 3. 健康检查
 
 | 路径 | 说明 |
 |------|------|
@@ -144,7 +124,6 @@ MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口�
 |------|------|------|
 | 400 | `40000` | 请求参数不合法（body / query 校验失败） |
 | 400 | `40001` | SQL 执行失败（语法错、表或字段不存在） |
-| 400 | `40004` | 表名、字段名、聚合表达式不合法 |
 | 403 | `40300` | 被只读 / 单语句检查拒绝 |
 | 500 | `50000` | 服务内部错误 |
 | 503 | `50300` | 数据库未配置或连接不可用 |
@@ -160,7 +139,6 @@ everything-api/
 │   ├── __main__.py        # python -m app
 │   ├── config.py          # 环境变量 → Settings
 │   ├── db.py              # 引擎单例、SQL 校验、执行、超时
-│   ├── table_query.py     # 按表查询的 SQL 构造（标识符白名单）
 │   ├── schemas.py         # 请求/响应模型
 │   ├── errors.py          # 错误码与统一响应
 │   └── routers/data.py    # 数据接口
@@ -176,7 +154,7 @@ everything-api/
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 13 个用例，用临时 SQLite 覆盖接口契约与安全校验
+pytest          # 9 个用例，用临时 SQLite 覆盖接口契约与安全校验
 ruff check app tests
 ```
 

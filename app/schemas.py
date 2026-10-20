@@ -29,25 +29,6 @@ class SqlQueryRequest(BaseModel):
     )
 
 
-class TableQueryRequest(BaseModel):
-    """按表名 + 条件查询的请求参数（查询串形式传入）。"""
-
-    fields: str = Field(default="*", description="逗号分隔的字段列表，默认 *")
-    where: str | None = Field(
-        default=None,
-        description='JSON 数组：[{"col":"price","op":">","value":100}]',
-    )
-    group_by: str | None = Field(default=None, description="逗号分隔的分组字段")
-    order_by: str | None = Field(default=None, description="排序，如 dt DESC 或 COUNT(*) DESC")
-    aggregate: str | None = Field(
-        default=None,
-        description='聚合表达式，如 SUM(download_count) AS total, COUNT(*) AS cnt',
-    )
-    limit: int | None = Field(default=None, ge=1, description="行数限制")
-    offset: int = Field(default=0, ge=0, description="偏移量")
-    with_count: bool = Field(default=False, description="是否额外统计满足条件的总行数")
-
-
 class Envelope(BaseModel):
     """对外统一响应结构。"""
 

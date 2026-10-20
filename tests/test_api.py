@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 SQL_PATH = "/api/data/sql"
-TABLE_PATH = "/api/data/dws_taptap_download_daily/query"
 
 
 def test_health(client):
@@ -66,50 +65,6 @@ def test_sql_reports_database_error(client):
 def test_sql_empty_body_rejected(client):
     resp = client.post(SQL_PATH, json={"sql": "   "})
     assert resp.status_code == 403
-
-
-def test_table_query_with_where_and_order(client):
-    resp = client.get(
-        TABLE_PATH,
-        params={
-            "fields": "game_name,download_count",
-            "where": '[{"col":"download_count","op":">=","value":1000}]',
-            "order_by": "download_count DESC",
-        },
-    )
-    body = resp.json()
-    assert resp.status_code == 200
-    assert body["total"] == 2
-    assert body["data"][0]["download_count"] == 1500
-    assert set(body["data"][0]) == {"game_name", "download_count"}
-
-
-def test_table_query_with_count(client):
-    resp = client.get(TABLE_PATH, params={"with_count": True, "limit": 1})
-    body = resp.json()
-    assert body["total"] == 3
-    assert len(body["data"]) == 1
-
-
-def test_table_query_group_by_aggregate(client):
-    resp = client.get(
-        TABLE_PATH,
-        params={
-            "fields": "game_name",
-            "aggregate": "SUM(download_count) AS total_download",
-            "group_by": "game_name",
-            "order_by": "total_download DESC",
-        },
-    )
-    body = resp.json()
-    assert body["data"][0]["game_name"] == "火炬之光"
-    assert body["data"][0]["total_download"] == 2700
-
-
-def test_table_query_rejects_bad_identifier(client):
-    resp = client.get("/api/data/dws;drop/query")
-    assert resp.status_code == 400
-    assert resp.json()["code"] == 40004
 
 
 def test_list_tables(client):

@@ -11,7 +11,6 @@ CODE_OK = 0
 CODE_BAD_REQUEST = 40000          # 参数不合法
 CODE_SQL_GUARD = 40300            # 被只读 / 单语句检查拒绝
 CODE_SQL_ERROR = 40001            # SQL 执行失败（语法、表不存在等）
-CODE_BAD_IDENTIFIER = 40004       # 表名 / 字段名不合法
 CODE_DB_UNAVAILABLE = 50300       # 连接失败或配置缺失
 CODE_INTERNAL = 50000
 

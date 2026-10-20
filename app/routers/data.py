@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from ..config import ConfigError, get_settings
 from ..db import (
@@ -16,15 +16,13 @@ from ..db import (
     validate_sql,
 )
 from ..errors import (
-    CODE_BAD_IDENTIFIER,
     CODE_DB_UNAVAILABLE,
     CODE_SQL_ERROR,
     CODE_SQL_GUARD,
     error_response,
     ok,
 )
-from ..schemas import SqlQueryRequest, TableQueryRequest
-from ..table_query import IdentifierError, build_table_query
+from ..schemas import SqlQueryRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/data", tags=["data"])
@@ -74,37 +72,3 @@ def list_tables() -> Any:
 
     names = [list(row.values())[0] for row in result.rows if row]
     return ok(names, total=len(names))
-
-
-@router.get("/{table}/query", summary="按表名查询")
-def query_table(
-    table: str,
-    params: TableQueryRequest = Depends(),
-) -> Any:
-    settings = get_settings()
-    try:
-        engine = get_engine()
-    except ConfigError as exc:
-        return error_response(CODE_DB_UNAVAILABLE, str(exc), 503)
-
-    try:
-        built = build_table_query(
-            engine.dialect,
-            table,
-            data=params.model_dump(),
-            max_rows=settings.api_max_rows,
-        )
-    except IdentifierError as exc:
-        return error_response(CODE_BAD_IDENTIFIER, str(exc), 400)
-
-    try:
-        result = run_query(built.sql, built.params)
-        if params.with_count:
-            counted = run_query(built.count_sql, built.count_params, max_rows=1)
-            total = int(list(counted.rows[0].values())[0]) if counted.rows else result.total
-        else:
-            total = result.total
-    except SqlExecutionError as exc:
-        return error_response(CODE_SQL_ERROR, str(exc), 400)
-
-    return ok(result.rows, total=total, truncated=result.truncated)
