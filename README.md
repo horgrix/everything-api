@@ -66,6 +66,21 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 | `API_CORS_ALLOW_CREDENTIALS` | `false` | 是否允许跨域携带 Cookie / Authorization |
 | `API_DATABASE_URL` | 无 | 直接指定 SQLAlchemy URL，优先级高于 `HK_DB_MYSQL_*`（测试用） |
 
+### 访问统计（PV/UV，可选）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `API_STATS_SALT` | 空 | UV 匿名化的盐。**留空即视为未启用**，两个统计接口返回空统计，前端组件自动隐藏 |
+| `API_STATS_PREFIX` | `/api/v09/stats` | 主路由前缀（进 openapi）；与 `/api/v09/data` 并列。无论怎么改，同一份路由都会再挂一份 `/api/stats` 别名（前端默认就用它） |
+| `API_STATS_TABLE` | `visit_event` | 明细表名（只允许字母数字下划线） |
+| `API_STATS_DEDUP_MINUTES` | `30` | 同一 (visitor, path) 在该分钟内重复上报只算 1 次 PV |
+| `API_STATS_CACHE_SECONDS` | `45` | 本周统计的服务端缓存秒数，`0` 不缓存 |
+| `API_STATS_RETENTION_DAYS` | `180` | 明细保留天数，`<=0` 不清理（每小时最多清理一次） |
+| `API_STATS_DATABASE_URL` | 无 | 写库连接串，优先级最高（测试用 SQLite） |
+| `API_STATS_MYSQL_USER` / `API_STATS_MYSQL_PWD` | 无 | 写库专用账号（需 `INSERT`/`DELETE`）；不填则复用 `HK_DB_MYSQL_USER` |
+
+> 写库连接默认复用 `HK_DB_MYSQL_HOST` / `HK_DB_MYSQL_PORT` / `HK_DB_MYSQL_DB`，只有账号可以单独指定 —— 通用查询接口依然是只读的，统计写入不走 `run_query`。
+
 ---
 
 ## 接口
@@ -115,6 +130,48 @@ MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口�
 | `GET /health` | 进程状态 + 数据库配置是否齐全，**不连库** |
 | `GET /health/db` | 真正执行 `SELECT 1`，连不上返回 503 |
 
+### 4. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`
+
+给 `everything-ui` 的「本周 PV/UV」组件用，主前缀 `/api/v09/stats`（与 `/api/v09/data` 并列），
+并额外挂一份 `/api/stats` 别名 —— 前端默认就请求 `https://horgrix.com/api/stats`，nginx 按原路径转发即可。
+
+上报一次浏览：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v09/stats/hit \
+  -H "Content-Type: application/json" \
+  -H "User-Agent: Mozilla/5.0 ..." \
+  -d '{"path": "/taptap", "title": "TapTap报表", "referrer": "https://horgrix.com/business"}'
+# {"code":0,"message":"success","data":{"counted":true}}
+```
+
+读本周统计（周一 00:00 起，Asia/Shanghai）：
+
+```bash
+curl http://127.0.0.1:8000/api/v09/stats/week
+# {"code":0,"message":"success","data":{"week_start":"2026-10-26","pv":1234,"uv":86,
+#   "top_paths":[{"path":"/taptap","pv":620,"uv":41}]}}
+```
+
+口径与行为：
+
+- **本周** = 本周一 `00:00:00` ~ 现在，时区 `Asia/Shanghai`；上周数据不计入
+- **PV** = 浏览次数；**UV** = 本周去重的独立访客数
+- **访客匿名标识** = `sha256(客户端 IP + User-Agent + API_STATS_SALT)` 前 32 位，**不落原 IP**；IP 优先取 `X-Forwarded-For` 首个地址
+- **防连点**：同一 `(visitor, path)` 在 `API_STATS_DEDUP_MINUTES`（默认 30）分钟内重复上报只算 1 次
+- **不计数**：空 User-Agent、Bot/爬虫 UA（含 `python-requests`、`curl/`、`Go-http-client` 等）、`?no_track=1`、`X-No-Track` 头
+- `path` 服务端会再归一化一次（去 query/hash，限长 128），`title` 只校验不入库
+- **无数据**时 `pv`/`uv` 返回 `0`、`top_paths` 返回 `[]`，不会是 `null`
+- 依赖缺失（没配盐 / 表不存在 / 写库连不上）时两个接口都**降级为空数据、返回 200**，不向前端报 5xx —— 前端拿不到就隐藏组件
+- `top_paths` 按 PV 倒序，最多 3 条；本周统计带 `API_STATS_CACHE_SECONDS`（默认 45 秒）进程内缓存
+
+首次使用先建表（DDL 在 `sql/visit_event.sql`，可重复执行）：
+
+```bash
+python scripts/init_visit_event.py --check   # 只看表在不在
+python scripts/init_visit_event.py          # 建表
+```
+
 ---
 
 ## 跨域（CORS）
@@ -158,9 +215,14 @@ everything-api/
 │   ├── __main__.py        # python -m app
 │   ├── config.py          # 环境变量 → Settings
 │   ├── db.py              # 引擎单例、SQL 校验、执行、超时
+│   ├── stats.py           # 访问统计：访客 hash、周窗口、防连点、缓存、清理
 │   ├── schemas.py         # 请求/响应模型
 │   ├── errors.py          # 错误码与统一响应
-│   └── routers/data.py    # 数据接口
+│   └── routers/
+│       ├── data.py        # 数据接口
+│       └── stats.py       # 访问统计接口
+├── sql/visit_event.sql    # 访问统计建表 DDL
+├── scripts/init_visit_event.py  # 建表脚本（--check 只检查）
 ├── tests/                 # 用临时 SQLite 验证接口契约
 ├── .env.example
 ├── requirements.txt
@@ -173,7 +235,7 @@ everything-api/
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 12 个用例（含跨域预检/响应头），用临时 SQLite 覆盖接口契约与安全校验
+pytest          # 22 个用例（含跨域预检/响应头、PV/UV 上报与聚合），用临时 SQLite 覆盖接口契约与安全校验
 ruff check app tests
 ```
 
@@ -187,3 +249,29 @@ SQL 级测试用 SQLite 跑（走 `API_DATABASE_URL` 覆盖），因此**不需�
 - 前置 Nginx / 网关做 HTTPS 与访问控制：这个接口能执行任意 `SELECT`，不要裸奔在公网
 - `API_CORS_ORIGINS` 上线后改成前端具体域名
 - 多 worker 部署时每个进程各自持有一个连接池（默认 5 常驻 + 10 溢出），注意给数据库留够连接数
+
+### 访问统计上线步骤
+
+1. 用**写权限账号**建表：`python scripts/init_visit_event.py`（或手动执行 `sql/visit_event.sql`）
+2. `.env` 里配 `API_STATS_SALT`（随机串，改动即等于重置 UV 口径）
+3. 写库账号与只读账号不同时，补 `API_STATS_MYSQL_USER` / `API_STATS_MYSQL_PWD`
+4. nginx 转发（公网站点 horgrix.com 的同源方案，前端零改动）：
+   ```nginx
+   # /etc/nginx/conf.d/horgrix.com.conf，加在 location /api/ 之前或之后均可（前缀最长匹配）
+   location /api/stats/ {
+       proxy_pass http://127.0.0.1:8000;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+   }
+   ```
+   走 `api.horgrix.com` 的方案则加 `location /api/v09/stats/ { proxy_pass http://127.0.0.1:8000; ... }`，
+   前端把 `VITE_STATS_BASE_URL` 指到 `https://api.horgrix.com/api/v09/stats`（跨域已放行）
+5. 重启服务后验证：
+   ```bash
+   curl -X POST https://<域名>/api/v09/stats/hit -H "Content-Type: application/json" \
+     -H "User-Agent: Mozilla/5.0 (compatible; check)" -d '{"path":"/deploy-check"}'
+   curl https://<域名>/api/v09/stats/week
+   ```
+   再访问一次站点，确认 `pv` 增长、`top_paths` 出现真实路径

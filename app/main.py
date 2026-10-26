@@ -18,7 +18,7 @@ from .errors import (
     error_response,
     ok,
 )
-from .routers import data
+from .routers import data, stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +68,11 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, **build_cors_options(settings))
 
 app.include_router(data.router)
+app.include_router(stats.router, prefix=settings.api_stats_prefix)
+if settings.api_stats_prefix != "/api/stats":
+    # 前端默认请求 /api/stats（与 /api/v09/data 并列），再挂一份别名，
+    # 这样 nginx 只需按原样转发，前端不必改 baseURL。不进 openapi，避免重复。
+    app.include_router(stats.router, prefix="/api/stats", include_in_schema=False)
 
 
 @app.get("/", include_in_schema=False)

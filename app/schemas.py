@@ -29,6 +29,22 @@ class SqlQueryRequest(BaseModel):
     )
 
 
+class HitRequest(BaseModel):
+    """上报一次页面浏览。"""
+
+    path: str = Field(
+        ...,
+        min_length=1,
+        max_length=512,
+        description="页面路径，只取 pathname；服务端会再归一化（去 query/hash，限长 128）",
+        examples=["/taptap"],
+    )
+    title: str | None = Field(
+        default=None, max_length=255, description="页面标题，可选（仅校验，不入库）"
+    )
+    referrer: str | None = Field(default=None, max_length=512, description="来源页，可选")
+
+
 class Envelope(BaseModel):
     """对外统一响应结构。"""
 
