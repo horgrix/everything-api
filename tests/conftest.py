@@ -43,6 +43,7 @@ def _seed() -> None:
                 day TEXT NOT NULL,
                 path TEXT NOT NULL,
                 visitor TEXT NOT NULL,
+                visitor_src TEXT NOT NULL DEFAULT 'fp',
                 referrer TEXT NULL,
                 created_at TEXT NOT NULL
             )
@@ -62,9 +63,9 @@ def clear_visit_event() -> None:
     finally:
         conn.close()
 
-    from app.stats import clear_week_cache
+    from app.stats import clear_stats_cache
 
-    clear_week_cache()
+    clear_stats_cache()
 
 
 @pytest.fixture(scope="session")

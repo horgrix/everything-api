@@ -73,8 +73,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 | `API_STATS_SALT` | 空 | UV 匿名化的盐。**留空即视为未启用**，两个统计接口返回空统计，前端组件自动隐藏 |
 | `API_STATS_PREFIX` | `/api/v09/stats` | 主路由前缀（进 openapi）；与 `/api/v09/data` 并列。无论怎么改，同一份路由都会再挂一份 `/api/stats` 别名（前端默认就用它） |
 | `API_STATS_TABLE` | `visit_event` | 明细表名（只允许字母数字下划线） |
-| `API_STATS_DEDUP_MINUTES` | `30` | 同一 (visitor, path) 在该分钟内重复上报只算 1 次 PV |
-| `API_STATS_CACHE_SECONDS` | `45` | 本周统计的服务端缓存秒数，`0` 不缓存 |
+| `API_STATS_CACHE_SECONDS` | `45` | 窗口统计的服务端缓存秒数（按 `range` 分别缓存），`0` 不缓存 |
 | `API_STATS_RETENTION_DAYS` | `180` | 明细保留天数，`<=0` 不清理（每小时最多清理一次） |
 | `API_STATS_DATABASE_URL` | 无 | 写库连接串，优先级最高（测试用 SQLite） |
 | `API_STATS_MYSQL_USER` / `API_STATS_MYSQL_PWD` | 无 | 写库专用账号（需 `INSERT`/`DELETE`）；不填则复用 `HK_DB_MYSQL_USER` |
@@ -130,22 +129,22 @@ MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口�
 | `GET /health` | 进程状态 + 数据库配置是否齐全，**不连库** |
 | `GET /health/db` | 真正执行 `SELECT 1`，连不上返回 503 |
 
-### 4. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`
+### 4. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`、`GET {API_STATS_PREFIX}/summary`
 
 给 `everything-ui` 的「本周 PV/UV」组件用，主前缀 `/api/v09/stats`（与 `/api/v09/data` 并列），
 并额外挂一份 `/api/stats` 别名 —— 前端默认就请求 `https://horgrix.com/api/stats`，nginx 按原路径转发即可。
 
-上报一次浏览：
+上报一次浏览（`visitor_id` 强烈建议带上）：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v09/stats/hit \
   -H "Content-Type: application/json" \
   -H "User-Agent: Mozilla/5.0 ..." \
-  -d '{"path": "/taptap", "title": "TapTap报表", "referrer": "https://horgrix.com/business"}'
-# {"code":0,"message":"success","data":{"counted":true}}
+  -d '{"path": "/taptap", "visitor_id": "3f2b9c1e-8d4a-4b77-9c02-7b1e5a6d9f10", "referrer": "https://horgrix.com/business"}'
+# {"code":0,"message":"success","data":{"counted":true,"identity":"cid"}}
 ```
 
-读本周统计（周一 00:00 起，Asia/Shanghai）：
+读本周统计（老契约，字段不变、周一 00:00 起，Asia/Shanghai）：
 
 ```bash
 curl http://127.0.0.1:8000/api/v09/stats/week
@@ -153,17 +152,34 @@ curl http://127.0.0.1:8000/api/v09/stats/week
 #   "top_paths":[{"path":"/taptap","pv":620,"uv":41}]}}
 ```
 
+读任意窗口 + 曲线（`?range=week|7d|30d|today|all`，默认 `week`）：
+
+```bash
+curl 'http://127.0.0.1:8000/api/v09/stats/summary?range=7d'
+# {"code":0,"message":"success","data":{
+#   "range":"7d","start":"2026-10-29","end":"2026-11-04","granularity":"day",
+#   "week_start":"2026-11-02","pv":412,"uv":97,
+#   "series":[{"date":"2026-10-29","pv":58,"uv":21}, ...],
+#   "top_paths":[{"path":"/taptap","pv":221,"uv":48}]}}
+```
+
 口径与行为：
 
-- **本周** = 本周一 `00:00:00` ~ 现在，时区 `Asia/Shanghai`；上周数据不计入
-- **PV** = 浏览次数；**UV** = 本周去重的独立访客数
-- **访客匿名标识** = `sha256(客户端 IP + User-Agent + API_STATS_SALT)` 前 32 位，**不落原 IP**；IP 优先取 `X-Forwarded-For` 首个地址
-- **防连点**：同一 `(visitor, path)` 在 `API_STATS_DEDUP_MINUTES`（默认 30）分钟内重复上报只算 1 次
+- **时区**固定 `Asia/Shanghai`，所有窗口按自然日对齐；`week` = 本周一 `00:00:00` ~ 现在，`7d`/`30d` = 今天在内的最近 7/30 个自然日，`today` = 今天 00:00 起，`all` = 明细中最早一条起
+- **PV** = 明细行数，每次上报算 1 次，**服务端不按时间窗口去重**（防连点交给前端路由级 1.5s 去重）
+- **UV** = 窗口内 `COUNT(DISTINCT visitor)`；`series` 里是天（月）内的独立访客数，逐日 UV 相加不等于窗口 UV，属正常
+- **访客身份**（按优先级）：
+  1. 请求体里的 `visitor_id` —— 前端第一方匿名 ID（8~64 位 `[A-Za-z0-9_-]`，建议 localStorage 里的 uuid4），服务端只存 `sha256('cid:' + id + 盐)` 前 32 位，响应里 `identity: "cid"`
+  2. 没带或不合规：回退 `sha256(IP + UA + 盐)` 前 32 位，`identity: "fp"`
+  
+  原 IP / 原 UA 都不入库。用 `cid` 是为了避开两个老问题：移动网络 IP 漂移把一个人算成多个 UV，同一出口 NAT 又把多人并成 1
 - **不计数**：空 User-Agent、Bot/爬虫 UA（含 `python-requests`、`curl/`、`Go-http-client` 等）、`?no_track=1`、`X-No-Track` 头
 - `path` 服务端会再归一化一次（去 query/hash，限长 128），`title` 只校验不入库
-- **无数据**时 `pv`/`uv` 返回 `0`、`top_paths` 返回 `[]`，不会是 `null`
-- 依赖缺失（没配盐 / 表不存在 / 写库连不上）时两个接口都**降级为空数据、返回 200**，不向前端报 5xx —— 前端拿不到就隐藏组件
-- `top_paths` 按 PV 倒序，最多 3 条；本周统计带 `API_STATS_CACHE_SECONDS`（默认 45 秒）进程内缓存
+- **无数据**时 `pv`/`uv` 返回 `0`、`top_paths` 返回 `[]`、`series` 补齐窗口内全部桶（值为 0），不会是 `null`
+- `series` 的 `date` 默认 `YYYY-MM-DD`；窗口超过 180 天时 `granularity=month`，`date` 为 `YYYY-MM`
+- `range` 取值非法返回 **HTTP 400 / code 40000**，不静默回落（避免前端参数写错却看不到）
+- 依赖缺失（没配盐 / 表不存在 / 写库连不上）时接口都**降级为空数据、返回 200**，不向前端报 5xx —— 前端拿不到就隐藏组件
+- `top_paths` 按 PV 倒序，最多 3 条；窗口统计带 `API_STATS_CACHE_SECONDS`（默认 45 秒）进程内缓存，按 `range` 分别缓存，新上报即整体失效
 
 首次使用先建表（DDL 在 `sql/visit_event.sql`，可重复执行）：
 
@@ -171,6 +187,18 @@ curl http://127.0.0.1:8000/api/v09/stats/week
 python scripts/init_visit_event.py --check   # 只看表在不在
 python scripts/init_visit_event.py          # 建表
 ```
+
+### 4.1 v1 → v2 表结构（一次性，会清空历史）
+
+v2 相比 v1 只多一列 `visitor_src`（`cid` / `fp`），并去掉写入时的 30 分钟去重，
+所以旧结构的表无法直接沿用。确认可以清空历史数据后：
+
+```bash
+python scripts/reset_visit_event.py        # 体检：打印现有行数与列
+python scripts/reset_visit_event.py --yes  # DROP 并按 v2 重建（历史访问数据全部丢失）
+```
+
+`API_STATS_SALT` 与访客身份相关：换盐等于换 UV，生产上别随手改。
 
 ---
 
@@ -215,14 +243,15 @@ everything-api/
 │   ├── __main__.py        # python -m app
 │   ├── config.py          # 环境变量 → Settings
 │   ├── db.py              # 引擎单例、SQL 校验、执行、超时
-│   ├── stats.py           # 访问统计：访客 hash、周窗口、防连点、缓存、清理
+│   ├── stats.py           # 访问统计：访客身份、时间窗口、series 聚合、缓存、清理
 │   ├── schemas.py         # 请求/响应模型
 │   ├── errors.py          # 错误码与统一响应
 │   └── routers/
 │       ├── data.py        # 数据接口
 │       └── stats.py       # 访问统计接口
-├── sql/visit_event.sql    # 访问统计建表 DDL
+├── sql/visit_event.sql    # 访问统计建表 DDL（v2）
 ├── scripts/init_visit_event.py  # 建表脚本（--check 只检查）
+├── scripts/reset_visit_event.py # v1→v2 重建（--yes 会清空历史）
 ├── tests/                 # 用临时 SQLite 验证接口契约
 ├── .env.example
 ├── requirements.txt
@@ -235,7 +264,7 @@ everything-api/
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 22 个用例（含跨域预检/响应头、PV/UV 上报与聚合），用临时 SQLite 覆盖接口契约与安全校验
+pytest          # 32 个用例（含跨域预检/响应头、PV/UV 上报、窗口与 series 聚合），用临时 SQLite 覆盖接口契约与安全校验
 ruff check app tests
 ```
 

@@ -13,17 +13,21 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from ..config import ConfigError, get_settings
-from ..errors import ok
+from ..errors import CODE_BAD_REQUEST, error_response, ok
 from ..schemas import HitRequest
 from ..stats import (
+    DEFAULT_RANGE,
+    RangeError,
     StatsError,
-    clear_week_cache,
+    clear_stats_cache,
     client_ip,
+    empty_range,
     empty_week,
     is_bot_ua,
     normalize_path,
+    range_stats,
     record_hit,
-    visitor_hash,
+    resolve_visitor,
     week_stats,
 )
 
@@ -50,38 +54,44 @@ def hit(payload: HitRequest, request: Request) -> Any:
 
     - 未配置盐或写库不可用：返回 `{"counted": false}`，不报错；
     - 命中 `?no_track=1` / `X-No-Track` / Bot UA / 空 UA：不计数；
-    - 同一访客同一路径 30 分钟内重复上报只算 1 次。
+    - 访客身份优先用请求体里的 `visitor_id`（前端第一方匿名 ID），
+      没带或不合法时回退到 IP + UA 指纹；`identity` 字段告诉前端走的哪条。
+    - 每次上报都记 1 次 PV，服务端不做时间去重（防连点在前端路由层）。
     """
     settings = get_settings()
     if not settings.stats_enabled:
-        return ok({"counted": False})
+        return ok({"counted": False, "identity": None})
 
     if _no_track(request):
-        return ok({"counted": False})
+        return ok({"counted": False, "identity": None})
 
     ua = (request.headers.get("user-agent") or "").strip()
     if is_bot_ua(ua):
-        return ok({"counted": False})
+        return ok({"counted": False, "identity": None})
 
     path = normalize_path(payload.path)
     ip = client_ip(dict(request.headers), request.client.host if request.client else None)
-    visitor = visitor_hash(ip, ua, settings.api_stats_salt)
+    visitor, identity = resolve_visitor(payload.visitor_id, ip, ua, settings.api_stats_salt)
     referrer = (payload.referrer or "").strip()[:255] or None
 
     try:
-        counted = record_hit(path, visitor, referrer)
+        counted = record_hit(path, visitor, referrer, visitor_src=identity)
     except (StatsError, ConfigError) as exc:
         logger.warning("浏览上报降级（记 0 次）：%s", exc)
-        return ok({"counted": False})
+        return ok({"counted": False, "identity": identity})
 
     if counted:
-        clear_week_cache()
-    return ok({"counted": counted})
+        clear_stats_cache()
+    return ok({"counted": counted, "identity": identity})
 
 
 @router.get("/week", summary="本周访问统计（PV/UV + Top3 路径）")
 def week() -> Any:
-    """本周（周一 00:00 Asia/Shanghai 起）PV/UV 与访问量 Top3 页面。"""
+    """本周（周一 00:00 Asia/Shanghai 起）PV/UV 与访问量 Top3 页面。
+
+    老契约，字段固定为 `week_start / pv / uv / top_paths`，不做任何改动；
+    要曲线或其他时间窗口请用 `/summary?range=`。
+    """
     settings = get_settings()
     if not settings.stats_enabled:
         return ok(empty_week())
@@ -91,5 +101,34 @@ def week() -> Any:
     except (StatsError, ConfigError) as exc:
         logger.warning("本周访问统计降级（返回空数据）：%s", exc)
         return ok(empty_week())
+
+    return ok(data)
+
+
+@router.get("/summary", summary="按时间窗口返回访问统计（含 series 曲线）")
+def summary(range: str = DEFAULT_RANGE) -> Any:  # noqa: A002 - 与 query 名对齐
+    """`?range=week|7d|30d|today|all`，默认 `week`。
+
+    - `range=week` 的 `pv / uv / top_paths` 与 `/week` 完全一致；
+    - `series` 按窗口粒度铺满（缺数据的桶补 0），`date` 为 `YYYY-MM-DD`，
+      跨度过大时 `granularity=month`，`date` 为 `YYYY-MM`；
+    - 非法 `range` 返回 40000，不静默回落（避免前端参数写错看不到）。
+    """
+    settings = get_settings()
+    try:
+        name = range.strip().lower() if range else DEFAULT_RANGE
+    except AttributeError:
+        name = DEFAULT_RANGE
+
+    if not settings.stats_enabled:
+        return ok(empty_range(name))
+
+    try:
+        data = range_stats(name)
+    except RangeError as exc:
+        return error_response(CODE_BAD_REQUEST, str(exc), 400)
+    except (StatsError, ConfigError) as exc:
+        logger.warning("访问统计降级（返回空数据）：%s", exc)
+        return ok(empty_range(name))
 
     return ok(data)

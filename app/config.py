@@ -52,9 +52,7 @@ class Settings(BaseSettings):
     # UV 匿名化盐：留空则视为未启用，全部接口返回空统计
     api_stats_salt: str = ""
     api_stats_table: str = "visit_event"
-    # 同一 (visitor, path) 在该分钟数内重复上报只算 1 次 PV
-    api_stats_dedup_minutes: int = 30
-    # 本周统计的服务端缓存秒数，0 表示不缓存
+    # 窗口统计的服务端缓存秒数，0 表示不缓存
     api_stats_cache_seconds: int = 45
     # 数据保留天数，<=0 表示不清理
     api_stats_retention_days: int = 180

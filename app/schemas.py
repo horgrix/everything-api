@@ -43,6 +43,15 @@ class HitRequest(BaseModel):
         default=None, max_length=255, description="页面标题，可选（仅校验，不入库）"
     )
     referrer: str | None = Field(default=None, max_length=512, description="来源页，可选")
+    visitor_id: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "前端生成的第一方匿名访客 ID（8~64 位 [A-Za-z0-9_-]，建议 localStorage 里的 uuid4）。"
+            "服务端只存它的加盐哈希；不传或不合法时回退到 IP + UA 指纹"
+        ),
+        examples=["3f2b9c1e-8d4a-4b77-9c02-7b1e5a6d9f10"],
+    )
 
 
 class Envelope(BaseModel):
