@@ -76,7 +76,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 | `API_STATS_CACHE_SECONDS` | `45` | 窗口统计的服务端缓存秒数（按 `range` 分别缓存），`0` 不缓存 |
 | `API_STATS_RETENTION_DAYS` | `180` | 明细保留天数，`<=0` 不清理（每小时最多清理一次） |
 | `API_STATS_DATABASE_URL` | 无 | 写库连接串，优先级最高（测试用 SQLite） |
-| `API_STATS_TRUSTED_PROXIES` | `127.0.0.1,::1` | 可信反向代理地址（逗号分隔）。只有来自这些对端的 `X-Auth-Request-User` 才被采信为登录身份，公网直连伪造会被忽略 |
+| `API_STATS_TRUST_SSO_HEADER` | `true` | 是否采信反代透传的 `X-Auth-Request-User`（SSO 登录身份）。置 `false` 可整体退回 `visitor_id` / 指纹 |
 | `API_STATS_MYSQL_USER` / `API_STATS_MYSQL_PWD` | 无 | 写库专用账号（需 `INSERT`/`DELETE`）；不填则复用 `HK_DB_MYSQL_USER` |
 
 > 写库连接默认复用 `HK_DB_MYSQL_HOST` / `HK_DB_MYSQL_PORT` / `HK_DB_MYSQL_DB`，只有账号可以单独指定 —— 通用查询接口依然是只读的，统计写入不走 `run_query`。
@@ -175,8 +175,9 @@ curl 'http://127.0.0.1:8000/api/v09/stats/summary?range=7d'
   3. 两者都没有：回退 `sha256(IP + UA + 盐)` 前 32 位，`identity: "fp"`
   
   原 IP / 原 UA 都不入库。用 `sso`/`cid` 是为了避开两个老问题：移动网络 IP 漂移把一个人算成多个 UV，同一出口 NAT 又把多人并成 1。
-  `X-Auth-Request-User` 只在请求来自 `API_STATS_TRUSTED_PROXIES`（默认本机 nginx）时才采信，公网直接伪造该头会被忽略。
-  nginx 侧 `location /api/stats/` 需加一行 `proxy_set_header X-Auth-Request-User $sso_user;`（`$sso_user` 来自 `auth_request_set`）。
+  信任边界在边缘 nginx（`uvicorn` 开了 `proxy-headers`，`request.client.host` 是真实访客 IP，靠对端 IP 判断不可靠）：
+  受保护站点的 `location /api/stats/` 用 `proxy_set_header X-Auth-Request-User $sso_user;` **覆盖**该头（`$sso_user` 来自 `auth_request_set`），
+  其它不鉴权的入口显式 `proxy_set_header X-Auth-Request-User "";` 置空，防止伪造。
 - **不计数**：空 User-Agent、Bot/爬虫 UA（含 `python-requests`、`curl/`、`Go-http-client` 等）、`?no_track=1`、`X-No-Track` 头
 - `path` 服务端会再归一化一次（去 query/hash，限长 128），`title` 只校验不入库
 - **无数据**时 `pv`/`uv` 返回 `0`、`top_paths` 返回 `[]`、`series` 补齐窗口内全部桶（值为 0），不会是 `null`

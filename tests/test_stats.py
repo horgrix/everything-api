@@ -83,29 +83,31 @@ def test_sso_identity_wins_over_visitor_id(client, clean_stats):
     assert data["uv"] == 2
 
 
-def test_sso_header_ignored_from_untrusted_peer(monkeypatch):
-    """公网直连伪造 X-Auth-Request-User 不会被采信。"""
+def test_sso_header_respects_trust_switch(monkeypatch):
+    """`API_STATS_TRUST_SSO_HEADER=false` 时完全不采信该头（降级到 cid / fp）。"""
     from app.routers import stats as stats_router
 
     class _Settings:
-        trusted_proxies = {"127.0.0.1", "::1"}
-
-    class _Client:
-        def __init__(self, host):
-            self.host = host
+        api_stats_trust_sso_header = False
 
     class _Request:
-        def __init__(self, host, headers):
-            self.client = _Client(host)
-            self.headers = headers
+        client = None
+        headers = {"x-auth-request-user": "attacker"}
 
     monkeypatch.setattr(stats_router, "get_settings", lambda: _Settings())
-    spoofed = {"x-auth-request-user": "attacker"}
+    assert stats_router._sso_user(_Request()) is None
 
-    assert stats_router._sso_user(_Request("203.0.113.9", spoofed)) is None
-    assert stats_router._sso_user(_Request("127.0.0.1", spoofed)) == "attacker"
-    # 大小时写不敏感（ASGI header 已小写化，这里兼容一下）
-    assert stats_router._sso_user(_Request("127.0.0.1", {})) is None
+    class _Trusted:
+        api_stats_trust_sso_header = True
+
+    monkeypatch.setattr(stats_router, "get_settings", lambda: _Trusted())
+    assert stats_router._sso_user(_Request()) == "attacker"
+
+    # 没有该头时返回 None，交给下一级身份
+    class _NoHeader(_Request):
+        headers = {}
+
+    assert stats_router._sso_user(_NoHeader()) is None
 
 
 def test_client_id_beats_ip_drift(client, clean_stats):

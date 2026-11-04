@@ -38,15 +38,17 @@ _NO_TRACK_VALUES = {"1", "true", "yes", "on"}
 
 
 def _sso_user(request: Request) -> str | None:
-    """从可信反向代理（oauth2-proxy）透传的登录身份。
+    """从反向代理（oauth2-proxy）透传的登录身份。
 
     站点整站受 SSO 保护时，Keycloak 的 `sub` 是天然的稳定访客标识：
-    同一账号换设备、换 IP 都算一个人。只采信来自可信代理对端的请求，
-    公网直接伪造这个头会被忽略（降级到 visitor_id / 指纹）。
+    同一账号换设备、换 IP 都算一个人。
+
+    信任边界在边缘 nginx：受保护站点的 `location /api/stats/` 用
+    `proxy_set_header X-Auth-Request-User $sso_user;` 覆盖该头，
+    其它入口显式置空，所以这里不需要再校验对端 IP
+    （uvicorn 开了 proxy-headers 后 `request.client.host` 已不是代理地址）。
     """
-    settings = get_settings()
-    peer = request.client.host if request.client else None
-    if not peer or peer not in settings.trusted_proxies:
+    if not get_settings().api_stats_trust_sso_header:
         return None
     for name in (
         "x-auth-request-user",
@@ -76,7 +78,7 @@ def hit(payload: HitRequest, request: Request) -> Any:
 
     - 未配置盐或写库不可用：返回 `{"counted": false}`，不报错；
     - 命中 `?no_track=1` / `X-No-Track` / Bot UA / 空 UA：不计数；
-    - 访客身份优先级：SSO 登录用户（可信反代透传的 `X-Auth-Request-User`）
+    - 访客身份优先级：SSO 登录用户（反代透传的 `X-Auth-Request-User`）
       > 请求体里的 `visitor_id`（前端第一方匿名 ID）
       > 回退到 IP + UA 指纹；`identity` 回 sso / cid / fp 告诉前端实际用了哪条。
     - 每次上报都记 1 次 PV，服务端不做时间去重（防连点在前端路由层）。
