@@ -146,6 +146,20 @@ def test_client_id_beats_ip_drift(client, clean_stats):
     assert data["uv"] == 2
 
 
+def test_hit_tolerates_long_title_and_referrer(client, clean_stats):
+    """title / referrer 过长不能把整次上报顶成 400（前端是静默失败，丢了就找不回来）。"""
+    resp = _hit(
+        client,
+        path="/long-meta",
+        title="标" * 300,
+        referrer="https://example.test/" + "a" * 600,
+        visitor_id=CID_A,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["counted"] is True
+    assert client.get(WEEK).json()["data"]["pv"] == 1
+
+
 def test_hit_normalizes_path(client, clean_stats):
     _hit(client, path="/taptap?tab=weekly#top")
     _hit(client, path="/taptap")

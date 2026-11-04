@@ -39,10 +39,12 @@ class HitRequest(BaseModel):
         description="页面路径，只取 pathname；服务端会再归一化（去 query/hash，限长 128）",
         examples=["/taptap"],
     )
-    title: str | None = Field(
-        default=None, max_length=255, description="页面标题，可选（仅校验，不入库）"
-    )
-    referrer: str | None = Field(default=None, max_length=512, description="来源页，可选")
+    # title / referrer 都是「锦上添花」字段，不该因为长度把整次上报顶掉：
+    # 不限长度（nginx 默认 client_max_body_size 1MB 兜底），referrer 服务端截到 255 再入库。
+    # 早期版本给了 max_length，导致 document.title / 带长 query 的 referrer 一超长就 400，
+    # 而前端是静默失败，这条 hit 就默默丢了。
+    title: str | None = Field(default=None, description="页面标题，可选（仅记录，不入库）")
+    referrer: str | None = Field(default=None, description="来源页，可选；服务端截断到 255 后入库")
     visitor_id: str | None = Field(
         default=None,
         max_length=200,
