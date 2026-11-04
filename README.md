@@ -76,7 +76,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 | `API_STATS_CACHE_SECONDS` | `45` | 窗口统计的服务端缓存秒数（按 `range` 分别缓存），`0` 不缓存 |
 | `API_STATS_RETENTION_DAYS` | `180` | 明细保留天数，`<=0` 不清理（每小时最多清理一次） |
 | `API_STATS_DATABASE_URL` | 无 | 写库连接串，优先级最高（测试用 SQLite） |
-| `API_STATS_TRUST_SSO_HEADER` | `true` | 是否采信反代透传的 `X-Auth-Request-User`（SSO 登录身份）。置 `false` 可整体退回 `visitor_id` / 指纹 |
+| `API_STATS_TRUST_SSO_HEADER` | `true` | 是否采信反代透传的 SSO 登录身份（`X-Auth-Request-Email` / `-Preferred-Username` / `-User`）。置 `false` 可整体退回 `visitor_id` / 指纹 |
 | `API_STATS_MYSQL_USER` / `API_STATS_MYSQL_PWD` | 无 | 写库专用账号（需 `INSERT`/`DELETE`）；不填则复用 `HK_DB_MYSQL_USER` |
 
 > 写库连接默认复用 `HK_DB_MYSQL_HOST` / `HK_DB_MYSQL_PORT` / `HK_DB_MYSQL_DB`，只有账号可以单独指定 —— 通用查询接口依然是只读的，统计写入不走 `run_query`。
@@ -170,14 +170,16 @@ curl 'http://127.0.0.1:8000/api/v09/stats/summary?range=7d'
 - **PV** = 明细行数，每次上报算 1 次，**服务端不按时间窗口去重**（防连点交给前端路由级 1.5s 去重）
 - **UV** = 窗口内 `COUNT(DISTINCT visitor)`；`series` 里是天（月）内的独立访客数，逐日 UV 相加不等于窗口 UV，属正常
 - **访客身份**（按优先级）：
-  1. **SSO 登录用户** —— 站点整站走 oauth2-proxy + Keycloak 时，nginx 把 `X-Auth-Request-User`（Keycloak 的 `sub`）透传进来，服务端只存 `sha256('sso:' + sub + 盐)` 前 32 位，`identity: "sso"`。同一账号换设备、换 IP、换浏览器都算一个人
+  1. **SSO 登录用户** —— 站点整站走 oauth2-proxy + Keycloak 时，nginx 把 `X-Auth-Request-Email`（以及 `-Preferred-Username` / `-User`）透传进来，服务端只存 `sha256('sso:' + 身份 + 盐)` 前 32 位，`identity: "sso"`。同一账号换设备、换 IP、换浏览器都算一个人
+     - **优先用 email，而不是 Keycloak 的 `sub`**：`sub` 按 realm/client 生成，同一个人的 dev、prod 两个 client 下 `sub` 不同，UV 会把一个人算成两个；email 跨 client 稳定。没有 email 时才依次回落 `preferred-username` → `sub`
   2. 请求体里的 `visitor_id` —— 前端第一方匿名 ID（8~64 位 `[A-Za-z0-9_-]`，建议 localStorage 里的 uuid4），存 `sha256('cid:' + id + 盐)` 前 32 位，`identity: "cid"`
   3. 两者都没有：回退 `sha256(IP + UA + 盐)` 前 32 位，`identity: "fp"`
   
   原 IP / 原 UA 都不入库。用 `sso`/`cid` 是为了避开两个老问题：移动网络 IP 漂移把一个人算成多个 UV，同一出口 NAT 又把多人并成 1。
   信任边界在边缘 nginx（`uvicorn` 开了 `proxy-headers`，`request.client.host` 是真实访客 IP，靠对端 IP 判断不可靠）：
-  受保护站点的 `location /api/stats/` 用 `proxy_set_header X-Auth-Request-User $sso_user;` **覆盖**该头（`$sso_user` 来自 `auth_request_set`），
+  受保护站点的 `location /api/stats/` 用 `proxy_set_header X-Auth-Request-Email $sso_email;`（以及 `-User $sso_user`）**覆盖**这两个头（均来自 `auth_request_set`），
   其它不鉴权的入口显式 `proxy_set_header X-Auth-Request-User "";` 置空，防止伪造。
+  需要 oauth2-proxy 开 `set_xauthrequest = true`，否则只有 `sub`、没有 email。
 - **不计数**：空 User-Agent、Bot/爬虫 UA（含 `python-requests`、`curl/`、`Go-http-client` 等）、`?no_track=1`、`X-No-Track` 头
 - `path` 服务端会再归一化一次（去 query/hash，限长 128），`title` 只校验不入库
 - **无数据**时 `pv`/`uv` 返回 `0`、`top_paths` 返回 `[]`、`series` 补齐窗口内全部桶（值为 0），不会是 `null`

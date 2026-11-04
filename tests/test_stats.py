@@ -83,6 +83,21 @@ def test_sso_identity_wins_over_visitor_id(client, clean_stats):
     assert data["uv"] == 2
 
 
+def test_sso_email_unifies_same_person_across_clients(client, clean_stats):
+    """同一个人在不同 client（Keycloak sub 不同）下登录，email 一样就算 1 个 UV。"""
+    dev = {"X-Auth-Request-Email": "Someone@horgrix.com", "X-Auth-Request-User": "sub-dev-1"}
+    prod = {"X-Auth-Request-Email": "someone@horgrix.com", "X-Auth-Request-User": "sub-prod-9"}
+    first = _hit(client, path="/taptap", ip="10.6.0.1", headers=dev).json()["data"]
+    assert first == {"counted": True, "identity": "sso"}
+    _hit(client, path="/business", ip="10.6.0.2", headers=prod)
+    # 没 email 时回落到 sub
+    _hit(client, path="/taptap", ip="10.6.0.3", headers={"X-Auth-Request-User": "sub-only-1"})
+
+    data = client.get(WEEK).json()["data"]
+    assert data["pv"] == 3
+    assert data["uv"] == 2
+
+
 def test_sso_header_respects_trust_switch(monkeypatch):
     """`API_STATS_TRUST_SSO_HEADER=false` 时完全不采信该头（降级到 cid / fp）。"""
     from app.routers import stats as stats_router
@@ -92,7 +107,10 @@ def test_sso_header_respects_trust_switch(monkeypatch):
 
     class _Request:
         client = None
-        headers = {"x-auth-request-user": "attacker"}
+        headers = {
+            "x-auth-request-email": "attacker@example.com",
+            "x-auth-request-user": "attacker",
+        }
 
     monkeypatch.setattr(stats_router, "get_settings", lambda: _Settings())
     assert stats_router._sso_user(_Request()) is None
@@ -101,9 +119,16 @@ def test_sso_header_respects_trust_switch(monkeypatch):
         api_stats_trust_sso_header = True
 
     monkeypatch.setattr(stats_router, "get_settings", lambda: _Trusted())
-    assert stats_router._sso_user(_Request()) == "attacker"
+    # 有 email 就用 email（跨 client 稳定），不再用 sub
+    assert stats_router._sso_user(_Request()) == "attacker@example.com"
 
-    # 没有该头时返回 None，交给下一级身份
+    # 只带 sub 时回落用 sub
+    class _SubOnly(_Request):
+        headers = {"x-auth-request-user": "kc-sub-1"}
+
+    assert stats_router._sso_user(_SubOnly()) == "kc-sub-1"
+
+    # 没有任何 SSO 头时返回 None，交给下一级身份
     class _NoHeader(_Request):
         headers = {}
 

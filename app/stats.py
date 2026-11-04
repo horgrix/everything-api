@@ -190,7 +190,7 @@ def normalize_client_id(value: str | None) -> str | None:
 
 
 def visitor_sso_hash(sso_user: str, salt: str) -> str:
-    """SSO 用户（Keycloak sub）的哈希；同一账号跨设备、跨 IP 恒等。"""
+    """SSO 用户（优先 email）的哈希；同一账号跨设备、跨 IP、跨 client 恒等。"""
     raw = f"sso:{sso_user.strip().lower()}|{salt}".encode()
     return hashlib.sha256(raw).hexdigest()[:32]
 

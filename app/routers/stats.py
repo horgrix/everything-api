@@ -40,20 +40,25 @@ _NO_TRACK_VALUES = {"1", "true", "yes", "on"}
 def _sso_user(request: Request) -> str | None:
     """从反向代理（oauth2-proxy）透传的登录身份。
 
-    站点整站受 SSO 保护时，Keycloak 的 `sub` 是天然的稳定访客标识：
+    站点整站受 SSO 保护时，登录身份是天然的稳定访客标识：
     同一账号换设备、换 IP 都算一个人。
 
+    **优先取 email 而不是 Keycloak 的 `sub`**：`sub` 在 Keycloak 里按 realm / client 生成，
+    同一个人的 dev / prod 两个 client 下 `sub` 不同，UV 会把一个人算成两个；
+    email 跨 client 稳定（oauth2-proxy 开了 `set_xauthrequest` 就会带）。
+    没 email 时才依次回落到 preferred-username / sub。
+
     信任边界在边缘 nginx：受保护站点的 `location /api/stats/` 用
-    `proxy_set_header X-Auth-Request-User $sso_user;` 覆盖该头，
+    `proxy_set_header X-Auth-Request-Email $sso_email;`（以及 User）覆盖该头，
     其它入口显式置空，所以这里不需要再校验对端 IP
     （uvicorn 开了 proxy-headers 后 `request.client.host` 已不是代理地址）。
     """
     if not get_settings().api_stats_trust_sso_header:
         return None
     for name in (
-        "x-auth-request-user",
         "x-auth-request-email",
         "x-auth-request-preferred-username",
+        "x-auth-request-user",
     ):
         value = (request.headers.get(name) or "").strip()
         if value:
