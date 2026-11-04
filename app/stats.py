@@ -459,6 +459,20 @@ def _earliest(conn: Any, table: str) -> datetime | None:
     return None
 
 
+def _empty_identities() -> dict[str, int]:
+    """按身份来源拆的 PV 的固定形状：三个来源总是存在，值不会是 None。"""
+    return {SRC_SSO: 0, SRC_CLIENT_ID: 0, SRC_FINGERPRINT: 0}
+
+
+def _rows_to_identities(rows: Iterable[Any]) -> dict[str, int]:
+    """把 (visitor_src, pv) 聚合行转成 {sso, cid, fp}；和等于窗口 PV。"""
+    counts = _empty_identities()
+    for row in rows:
+        source = str(row[0] or "unknown")
+        counts[source] = counts.get(source, 0) + int(row[1] or 0)
+    return counts
+
+
 def _rows_to_series(rows: Iterable[Any], window: Window) -> list[dict[str, Any]]:
     """把按桶聚合的行铺平成连续 series（缺失补 0）。"""
     collected: dict[str, dict[str, int]] = {}
@@ -540,6 +554,15 @@ def range_stats(
                 ),
                 params,
             ).all()
+            identity_rows = conn.execute(
+                text(
+                    "SELECT visitor_src, COUNT(*) AS pv "
+                    f"FROM {table} "
+                    "WHERE created_at >= :since AND created_at <= :until "
+                    "GROUP BY visitor_src"
+                ),
+                params,
+            ).all()
     except SQLAlchemyError as exc:
         raise StatsError(f"读取访问统计失败：{exc}") from exc
 
@@ -557,6 +580,9 @@ def range_stats(
             {"path": row["path"], "pv": int(row["pv"] or 0), "uv": int(row["uv"] or 0)}
             for row in top_rows
         ],
+        # 按身份来源拆的 PV（sso/cid/fp 三项总是存在，和为 0 或等于 pv），
+        # 给前端排查「UV 是不是降级成指纹了」用
+        "identities": _rows_to_identities(identity_rows),
     }
     _store_cache(name, payload, ttl)
     return dict(payload)
@@ -568,13 +594,14 @@ def _week_monday(now: datetime | None = None) -> datetime:
 
 
 def week_stats(now: datetime | None = None, use_cache: bool = True) -> dict[str, Any]:
-    """老契约：只要 week_start / pv / uv / top_paths，不带 range 相关字段。"""
+    """老契约：week_start / pv / uv / top_paths，外加附加字段 identities。"""
     data = range_stats("week", now=now, use_cache=use_cache)
     return {
         "week_start": data["week_start"],
         "pv": data["pv"],
         "uv": data["uv"],
         "top_paths": data["top_paths"],
+        "identities": data["identities"],
     }
 
 
@@ -595,6 +622,7 @@ def empty_range(range_name: str = DEFAULT_RANGE, now: datetime | None = None) ->
         "uv": 0,
         "series": [{"date": key, "pv": 0, "uv": 0} for key in series_buckets(window)],
         "top_paths": [],
+        "identities": _empty_identities(),
     }
 
 
@@ -605,6 +633,7 @@ def empty_week(now: datetime | None = None) -> dict[str, Any]:
         "pv": 0,
         "uv": 0,
         "top_paths": [],
+        "identities": _empty_identities(),
     }
 
 

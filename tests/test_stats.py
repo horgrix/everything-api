@@ -187,12 +187,31 @@ def test_week_empty_returns_zeros(client, clean_stats):
     body = client.get(WEEK).json()
     assert body["code"] == 0
     data = body["data"]
-    # 老契约字段一个不多一个不少
-    assert set(data) == {"week_start", "pv", "uv", "top_paths"}
+    # 老契约字段不变，identities 是附加字段
+    assert set(data) == {"week_start", "pv", "uv", "top_paths", "identities"}
     assert data["pv"] == 0
     assert data["uv"] == 0
     assert data["top_paths"] == []
+    assert data["identities"] == {"sso": 0, "cid": 0, "fp": 0}
     assert isinstance(data["week_start"], str) and len(data["week_start"]) == 10
+
+
+def test_week_identities_breakdown(client, clean_stats):
+    """`identities` 按身份来源拆 PV，三项恒存在且和等于 pv（前端拿来算百分比）。"""
+    sso = {"X-Auth-Request-Email": "one@horgrix.com"}
+    _hit(client, path="/taptap", ip="10.9.0.1", headers=sso)
+    _hit(client, path="/business", ip="10.9.0.2", headers=sso)
+    _hit(client, path="/taptap", ip="10.9.0.3", visitor_id=CID_A)
+    _hit(client, path="/taprep-monthly", ip="10.9.0.4")  # 无 visitor_id → 指纹
+
+    data = client.get(WEEK).json()["data"]
+    assert data["pv"] == 4
+    assert data["identities"] == {"sso": 2, "cid": 1, "fp": 1}
+    assert sum(data["identities"].values()) == data["pv"]
+
+    # summary 同步带该字段（同一份聚合）
+    summary = client.get(f"{PREFIX}/summary?range=week").json()["data"]
+    assert summary["identities"] == data["identities"]
 
 
 def test_week_pv_uv_and_top_paths(client, clean_stats):

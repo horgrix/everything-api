@@ -145,12 +145,13 @@ curl -X POST http://127.0.0.1:8000/api/v09/stats/hit \
 # {"code":0,"message":"success","data":{"counted":true,"identity":"cid"}}
 ```
 
-读本周统计（老契约，字段不变、周一 00:00 起，Asia/Shanghai）：
+读本周统计（老契约字段不变，另附 `identities`，周一 00:00 起，Asia/Shanghai）：
 
 ```bash
 curl http://127.0.0.1:8000/api/v09/stats/week
 # {"code":0,"message":"success","data":{"week_start":"2026-10-26","pv":1234,"uv":86,
-#   "top_paths":[{"path":"/taptap","pv":620,"uv":41}]}}
+#   "top_paths":[{"path":"/taptap","pv":620,"uv":41}],
+#   "identities":{"sso":1100,"cid":120,"fp":14}}}
 ```
 
 读任意窗口 + 曲线（`?range=week|7d|30d|today|all`，默认 `week`）：
@@ -161,7 +162,8 @@ curl 'http://127.0.0.1:8000/api/v09/stats/summary?range=7d'
 #   "range":"7d","start":"2026-10-29","end":"2026-11-04","granularity":"day",
 #   "week_start":"2026-11-02","pv":412,"uv":97,
 #   "series":[{"date":"2026-10-29","pv":58,"uv":21}, ...],
-#   "top_paths":[{"path":"/taptap","pv":221,"uv":48}]}}
+#   "top_paths":[{"path":"/taptap","pv":221,"uv":48}],
+#   "identities":{"sso":380,"cid":28,"fp":4}}}
 ```
 
 口径与行为：
@@ -187,6 +189,7 @@ curl 'http://127.0.0.1:8000/api/v09/stats/summary?range=7d'
 - `range` 取值非法返回 **HTTP 400 / code 40000**，不静默回落（避免前端参数写错却看不到）
 - 依赖缺失（没配盐 / 表不存在 / 写库连不上）时接口都**降级为空数据、返回 200**，不向前端报 5xx —— 前端拿不到就隐藏组件
 - `top_paths` 按 PV 倒序，最多 3 条；窗口统计带 `API_STATS_CACHE_SECONDS`（默认 45 秒）进程内缓存，按 `range` 分别缓存，新上报即整体失效
+- `identities` = 窗口内 PV 按身份来源拆分（`sso` / `cid` / `fp`），三项**恒存在**、值不会是 `null`，三项之和等于 `pv`；前端拿它算百分比就能看出身份有没有降级成浏览器标识。`/week` 与 `/summary` 都带
 
 首次使用先建表（DDL 在 `sql/visit_event.sql`，可重复执行）：
 
