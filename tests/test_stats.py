@@ -160,6 +160,23 @@ def test_hit_tolerates_long_title_and_referrer(client, clean_stats):
     assert client.get(WEEK).json()["data"]["pv"] == 1
 
 
+def test_hit_tolerates_long_path_and_visitor_id(client, clean_stats):
+    """超长 path / visitor_id 也不能 400：path 服务端截到 128，visitor_id 不合法就回落指纹。"""
+    long_path = "/deep/" + "segment-" * 80
+    resp = _hit(client, path=long_path, visitor_id="x" * 300)
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["counted"] is True
+    # 300 字符的 visitor_id 不符合 8~64 位规则 → 回落成 IP+UA 指纹
+    assert data["identity"] == "fp"
+
+    week = client.get(WEEK).json()["data"]
+    assert week["pv"] == 1
+    stored = week["top_paths"][0]["path"]
+    assert stored.startswith("/deep/segment-")
+    assert len(stored) == 128
+
+
 def test_hit_normalizes_path(client, clean_stats):
     _hit(client, path="/taptap?tab=weekly#top")
     _hit(client, path="/taptap")

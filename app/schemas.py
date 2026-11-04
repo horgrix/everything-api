@@ -35,8 +35,10 @@ class HitRequest(BaseModel):
     path: str = Field(
         ...,
         min_length=1,
-        max_length=512,
-        description="页面路径，只取 pathname；服务端会再归一化（去 query/hash，限长 128）",
+        description=(
+            "页面路径，只取 pathname；服务端会再归一化（去 query/hash，限长 128）。"
+            "不设 max_length：path 本来就会被截断，设上限只会让超长 URL 整条上报 400、PV 默默丢掉"
+        ),
         examples=["/taptap"],
     )
     # title / referrer 都是「锦上添花」字段，不该因为长度把整次上报顶掉：
@@ -47,10 +49,9 @@ class HitRequest(BaseModel):
     referrer: str | None = Field(default=None, description="来源页，可选；服务端截断到 255 后入库")
     visitor_id: str | None = Field(
         default=None,
-        max_length=200,
         description=(
             "前端生成的第一方匿名访客 ID（8~64 位 [A-Za-z0-9_-]，建议 localStorage 里的 uuid4）。"
-            "服务端只存它的加盐哈希；不传或不合法时回退到 IP + UA 指纹"
+            "服务端只存它的加盐哈希；不传、超长或不合法时回退到 IP + UA 指纹（不报 400）"
         ),
         examples=["3f2b9c1e-8d4a-4b77-9c02-7b1e5a6d9f10"],
     )
