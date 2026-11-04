@@ -77,6 +77,8 @@ def client():
     os.environ["API_STATS_DATABASE_URL"] = f"sqlite:///{_DB_PATH.as_posix()}"
     os.environ["API_STATS_SALT"] = "test-salt"
     os.environ["API_STATS_CACHE_SECONDS"] = "0"
+    # TestClient 的 peer 是 testclient，加入可信反代名单才能测 SSO 透传身份
+    os.environ["API_STATS_TRUSTED_PROXIES"] = "127.0.0.1,::1,testclient"
 
     from app.config import get_settings
 

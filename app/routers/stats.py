@@ -37,6 +37,28 @@ router = APIRouter(tags=["stats"])
 _NO_TRACK_VALUES = {"1", "true", "yes", "on"}
 
 
+def _sso_user(request: Request) -> str | None:
+    """从可信反向代理（oauth2-proxy）透传的登录身份。
+
+    站点整站受 SSO 保护时，Keycloak 的 `sub` 是天然的稳定访客标识：
+    同一账号换设备、换 IP 都算一个人。只采信来自可信代理对端的请求，
+    公网直接伪造这个头会被忽略（降级到 visitor_id / 指纹）。
+    """
+    settings = get_settings()
+    peer = request.client.host if request.client else None
+    if not peer or peer not in settings.trusted_proxies:
+        return None
+    for name in (
+        "x-auth-request-user",
+        "x-auth-request-email",
+        "x-auth-request-preferred-username",
+    ):
+        value = (request.headers.get(name) or "").strip()
+        if value:
+            return value
+    return None
+
+
 def _no_track(request: Request) -> bool:
     header = request.headers.get("x-no-track")
     if header is not None and header.strip().lower() not in {"", "0", "false", "no"}:
@@ -54,8 +76,9 @@ def hit(payload: HitRequest, request: Request) -> Any:
 
     - 未配置盐或写库不可用：返回 `{"counted": false}`，不报错；
     - 命中 `?no_track=1` / `X-No-Track` / Bot UA / 空 UA：不计数；
-    - 访客身份优先用请求体里的 `visitor_id`（前端第一方匿名 ID），
-      没带或不合法时回退到 IP + UA 指纹；`identity` 字段告诉前端走的哪条。
+    - 访客身份优先级：SSO 登录用户（可信反代透传的 `X-Auth-Request-User`）
+      > 请求体里的 `visitor_id`（前端第一方匿名 ID）
+      > 回退到 IP + UA 指纹；`identity` 回 sso / cid / fp 告诉前端实际用了哪条。
     - 每次上报都记 1 次 PV，服务端不做时间去重（防连点在前端路由层）。
     """
     settings = get_settings()
@@ -71,7 +94,9 @@ def hit(payload: HitRequest, request: Request) -> Any:
 
     path = normalize_path(payload.path)
     ip = client_ip(dict(request.headers), request.client.host if request.client else None)
-    visitor, identity = resolve_visitor(payload.visitor_id, ip, ua, settings.api_stats_salt)
+    visitor, identity = resolve_visitor(
+        payload.visitor_id, ip, ua, settings.api_stats_salt, sso_user=_sso_user(request)
+    )
     referrer = (payload.referrer or "").strip()[:255] or None
 
     try:

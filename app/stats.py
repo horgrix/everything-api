@@ -63,7 +63,8 @@ DEFAULT_RANGE = "week"
 MAX_DAILY_POINTS = 180
 MAX_BUCKETS = 400
 
-# 访问统计的访客身份来源
+# 访问统计的访客身份来源（优先级从高到低）
+SRC_SSO = "sso"
 SRC_CLIENT_ID = "cid"
 SRC_FINGERPRINT = "fp"
 
@@ -188,8 +189,22 @@ def normalize_client_id(value: str | None) -> str | None:
     return candidate
 
 
-def resolve_visitor(client_id: str | None, ip: str, ua: str, salt: str) -> tuple[str, str]:
-    """返回 (visitor, visitor_src)。有第一方 ID 就优先用它。"""
+def visitor_sso_hash(sso_user: str, salt: str) -> str:
+    """SSO 用户（Keycloak sub）的哈希；同一账号跨设备、跨 IP 恒等。"""
+    raw = f"sso:{sso_user.strip().lower()}|{salt}".encode()
+    return hashlib.sha256(raw).hexdigest()[:32]
+
+
+def resolve_visitor(
+    client_id: str | None,
+    ip: str,
+    ua: str,
+    salt: str,
+    sso_user: str | None = None,
+) -> tuple[str, str]:
+    """返回 (visitor, visitor_src)，按 SSO 用户 > 第一方 ID > IP+UA 指纹取。"""
+    if sso_user and sso_user.strip():
+        return visitor_sso_hash(sso_user, salt), SRC_SSO
     normalized = normalize_client_id(client_id)
     if normalized:
         return visitor_id_hash(normalized, salt), SRC_CLIENT_ID
@@ -599,6 +614,7 @@ __all__ = [
     "RangeError",
     "SRC_CLIENT_ID",
     "SRC_FINGERPRINT",
+    "SRC_SSO",
     "SUPPORTED_RANGES",
     "StatsError",
     "Window",
@@ -622,6 +638,7 @@ __all__ = [
     "table_name",
     "visitor_hash",
     "visitor_id_hash",
+    "visitor_sso_hash",
     "week_stats",
     "week_window",
 ]

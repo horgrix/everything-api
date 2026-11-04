@@ -67,6 +67,47 @@ def test_hit_rejects_bad_visitor_id(client, clean_stats):
     assert client.get(WEEK).json()["data"]["uv"] == 1
 
 
+def test_sso_identity_wins_over_visitor_id(client, clean_stats):
+    """整站 SSO 时，同一个登录账号换设备、换 IP 都算 1 个 UV。"""
+    sso = {"X-Auth-Request-User": "kc-sub-9f8e7d6c-1111"}
+    first = _hit(client, ip="10.5.0.1", visitor_id=CID_A, headers=sso).json()["data"]
+    assert first == {"counted": True, "identity": "sso"}
+    # 换 IP + 换浏览器指纹 + 换 visitor_id，只要还是同一个 SSO 账号就是同一人
+    _hit(client, ip="10.5.0.2", ua=CHROME + " v140", visitor_id=CID_B, headers=sso)
+    _hit(client, path="/business", ip="10.5.0.3", headers=sso)
+    # 另一个 SSO 账号
+    _hit(client, ip="10.5.0.1", headers={"X-Auth-Request-User": "kc-sub-2222"})
+
+    data = client.get(WEEK).json()["data"]
+    assert data["pv"] == 4
+    assert data["uv"] == 2
+
+
+def test_sso_header_ignored_from_untrusted_peer(monkeypatch):
+    """公网直连伪造 X-Auth-Request-User 不会被采信。"""
+    from app.routers import stats as stats_router
+
+    class _Settings:
+        trusted_proxies = {"127.0.0.1", "::1"}
+
+    class _Client:
+        def __init__(self, host):
+            self.host = host
+
+    class _Request:
+        def __init__(self, host, headers):
+            self.client = _Client(host)
+            self.headers = headers
+
+    monkeypatch.setattr(stats_router, "get_settings", lambda: _Settings())
+    spoofed = {"x-auth-request-user": "attacker"}
+
+    assert stats_router._sso_user(_Request("203.0.113.9", spoofed)) is None
+    assert stats_router._sso_user(_Request("127.0.0.1", spoofed)) == "attacker"
+    # 大小时写不敏感（ASGI header 已小写化，这里兼容一下）
+    assert stats_router._sso_user(_Request("127.0.0.1", {})) is None
+
+
 def test_client_id_beats_ip_drift(client, clean_stats):
     """同一个第一方 ID 换 IP / 换 UA 仍算一个 UV —— 这是改口径要解决的问题。"""
     _hit(client, ip="3.3.3.3", ua=CHROME, visitor_id=CID_A)

@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     api_stats_database_url: str | None = None
     api_stats_mysql_user: str | None = None
     api_stats_mysql_pwd: str | None = None
+    # 可信反向代理地址（逗号分隔）；只有来自这些对端的 X-Auth-Request-User 才被采信，
+    # 防止公网直接伪造该头。默认本机（nginx），测试里会加上 testclient
+    api_stats_trusted_proxies: str = "127.0.0.1,::1"
 
     @property
     def cors_origins(self) -> list[str]:
@@ -69,6 +72,10 @@ class Settings(BaseSettings):
     def stats_enabled(self) -> bool:
         """有盐即视为启用；盐为空时接口降级为空统计，前端组件自动隐藏。"""
         return bool(self.api_stats_salt.strip())
+
+    @property
+    def trusted_proxies(self) -> set[str]:
+        return {item.strip() for item in self.api_stats_trusted_proxies.split(",") if item.strip()}
 
     def stats_url(self) -> URL | str:
         """访问统计写库连接串。
