@@ -131,6 +131,7 @@ curl -X POST http://127.0.0.1:8000/api/v09/data/sql \
 | `GET /api/v09/data/home/active-apps?month=YYYY-MM` | 本月采集活跃 APP 数：月度快照（`ad_app_cnt` / `download_app_cnt` / `online_players_app_cnt` / `reserve_app_cnt`）+ 本月每日明细 | `dws_taptap_active_game_stat`（`period_type='monthly'` 与 `'daily'`） |
 | `GET /api/v09/data/home/type-share?month=YYYY-MM` | 本月游戏类型占比（dist 0 商业 / 1 独立 / 2 Maker）的下载量、在线峰值、广告曝光，另含三类合计与「未分类」归集 | `dws_taptap_download_periodic_report`、`dws_taptap_pc_online_peak_players_periodic_report`、`dws_taptap_ad_aggr_v6_periodic_report`（`period_type='monthly'` + `category_type='dist'`） |
 | `GET /api/v09/data/home/download-rank?month=YYYY-MM&limit=5` | 本月下载榜 TopN，三个榜（`top` 总量 / `gain` 增量最多 / `loss` 下滑最多）各取前 `limit` 名（1~20，默认 5） | `dws_taptap_download_periodic_rank`（`period_type='monthly'`） |
+| `GET /api/v09/data/home/ad-rank?month=YYYY-MM&limit=5` | 本月广告曝光榜 TopN，结构同下载榜，数值口径为广告曝光次数 | `dws_taptap_ad_aggr_v6_periodic_rank`（`period_type='monthly'`） |
 
 ```bash
 curl 'http://127.0.0.1:8000/api/v09/data/home/active-apps?month=2026-11'
@@ -154,18 +155,23 @@ curl 'http://127.0.0.1:8000/api/v09/data/home/type-share?month=2026-11'
 curl 'http://127.0.0.1:8000/api/v09/data/home/download-rank?month=2026-11&limit=5'
 # {"code":0,"message":"success","data":{
 #   "month":"2026-11","limit":5,
+#   "total_field":"total_download","prev_field":"prev_total_download","diff_field":"diff_download",
 #   "categories":[
 #     {"key":"top","items":[{"rank_no":1,"app_id":1007673,"app_name":"柚松屋",
 #       "icon":"https://...","distribution_type":0,"tags":["模拟"],
-#       "total_download":568784,"prev_total_download":262734,"diff_download":306050}, ...]},
+#       "total":568784,"prev":262734,"diff":306050}, ...]},
 #     {"key":"gain","items":[...]},
 #     {"key":"loss","items":[...]}]}}
+
+curl 'http://127.0.0.1:8000/api/v09/data/home/ad-rank?month=2026-11&limit=5'
+# 结构同上（广告曝光榜），字段名透出为 total_views / prev_total_views / diff_views
 ```
 
 口径与行为：
 
 - `month` 缺省取服务器当前月（`Asia/Shanghai`），格式 `YYYY-MM`，非法值直接 **400 / code 40000**，不静默回落
-- `download-rank` 的 `categories` **恒含 top / gain / loss 三项且顺序固定**（当月缺数据时 `items` 为 `[]`）；同榜同 `rank_no` / 同 `app_id` 的残留重复行会去重；`limit` 超出 1~20 返回 400
+- 两个榜单接口的 `categories` **恒含 top / gain / loss 三项且顺序固定**（当月缺数据时 `items` 为 `[]`）；同榜同 `rank_no` / 同 `app_id` 的残留重复行会去重；`limit` 超出 1~20 返回 400
+- 榜单的数值键名统一为 `total` / `prev` / `diff`，真实列名（下载量 `total_download…`、曝光 `total_views…`）通过 `total_field` / `prev_field` / `diff_field` 透出，便于前端确认口径
 - `types` **恒含 dist 0/1/2 三项**（当月没有该类型的行时补 0），顺序固定，前端不必判空
 - `totals` 只累加这三类；`category_value` 不在 0/1/2 的行（如广告表的「未分类」）单独归集到 `unclassified`，不进占比分母
 - 三张月表缺表/缺数时返回 `code 40001` 与数据库原文，不会伪造数据

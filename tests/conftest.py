@@ -22,6 +22,15 @@ def _rank(category, rank_no, app_id, app_name, dist, tag1, tag2,
     )
 
 
+def _ad_rank(category, rank_no, app_id, app_name, dist, tag1, total, prev, diff,
+             month="2026-11"):
+    """造一条广告曝光榜行（monthly）。"""
+    return (
+        "monthly", month, category, rank_no, app_id, app_name, f"icon-{app_id}.png",
+        dist, tag1, total, prev, diff,
+    )
+
+
 def _seed() -> None:
     conn = sqlite3.connect(_DB_PATH)
     try:
@@ -192,6 +201,46 @@ def _seed() -> None:
                 _rank("loss", 2, 165287, "Phigros", 0, "音乐", None, 286374, 1288645, -1002271),
                 # 上月行不应混进当月结果
                 _rank("top", 1, 111, "上月第一名", 0, "模拟", None, 999, 0, 999, month="2026-10"),
+            ],
+        )
+
+        # 首页概览：广告曝光榜（top / gain / loss，列名与下载榜不同）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_ad_aggr_v6_periodic_rank (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                rank_category TEXT NOT NULL,
+                rank_no INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                app_name TEXT NULL,
+                icon TEXT NULL,
+                distribution_type INTEGER NULL,
+                tag_1 TEXT NULL,
+                tag_2 TEXT NULL,
+                tag_3 TEXT NULL,
+                total_views INTEGER NULL,
+                prev_total_views INTEGER NULL,
+                diff_views INTEGER NULL,
+                is_active INTEGER NULL,
+                updated_at TEXT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_ad_aggr_v6_periodic_rank "
+            "(period_type, crawled_at, rank_category, rank_no, app_id, app_name, icon, "
+            " distribution_type, tag_1, total_views, prev_total_views, diff_views) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                _ad_rank("top", 1, 239372, "燕云十六声", 0, "动作", 585, 684, -99),
+                _ad_rank("top", 2, 893924, "星途天城", 0, "角色扮演", 514, 522, -8),
+                _ad_rank("top", 3, 860527, "地城狩猎", 0, "策略", 512, 305, 207),
+                _ad_rank("gain", 1, 824115, "三国志：王道天下", 0, "策略", 331, 34, 297),
+                _ad_rank("gain", 2, 826044, "斗罗大陆：传承", 0, "角色扮演", 262, 44, 218),
+                _ad_rank("loss", 1, 903352, "我叫MT：崛起", 0, "卡牌", 445, 1026, -581),
+                _ad_rank("loss", 2, 748031, "伊莫", 0, "动作", 316, 704, -388),
             ],
         )
 

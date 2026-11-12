@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -46,6 +47,7 @@ DOWNLOAD_REPORT_TABLE = "dws_taptap_download_periodic_report"
 ONLINE_REPORT_TABLE = "dws_taptap_pc_online_peak_players_periodic_report"
 AD_REPORT_TABLE = "dws_taptap_ad_aggr_v6_periodic_report"
 DOWNLOAD_RANK_TABLE = "dws_taptap_download_periodic_rank"
+AD_RANK_TABLE = "dws_taptap_ad_aggr_v6_periodic_rank"
 
 # 活跃 APP 的 4 个指标列
 ACTIVE_COLUMNS = (
@@ -61,8 +63,26 @@ _MONTH_RE = re.compile(MONTH_PATTERN)
 # distribution_type：0 商业 / 1 独立 / 2 Maker
 DIST_TYPES = ("0", "1", "2")
 
-# 下载榜的三种排名：总量榜 / 增量榜 / 下滑榜（顺序即前端展示顺序）
+# 榜单的三种排名：总量榜 / 增量榜 / 下滑榜（顺序即前端展示顺序）
 RANK_CATEGORIES = ("top", "gain", "loss")
+
+
+@dataclass(frozen=True)
+class RankSource:
+    """一个榜单的数据源：表名 + 三个数值列名（各表列名不同，原样透出给前端）。"""
+
+    table: str
+    total: str
+    prev: str
+    diff: str
+    label: str
+
+
+# 下载榜（下载量）/ 广告榜（广告曝光次数）
+DOWNLOAD_RANK = RankSource(
+    DOWNLOAD_RANK_TABLE, "total_download", "prev_total_download", "diff_download", "下载榜"
+)
+AD_RANK = RankSource(AD_RANK_TABLE, "total_views", "prev_total_views", "diff_views", "广告榜")
 
 
 def _current_month() -> str:
@@ -234,21 +254,8 @@ def type_share(
     }
     return ok(payload, total=len(payload["types"]))
 
-@routes.get("/download-rank", summary="本月下载榜 TopN（总量 / 增量 / 下滑）")
-def download_rank(
-    month: str | None = Query(
-        default=None,
-        pattern=MONTH_PATTERN,
-        description="统计月份 YYYY-MM，缺省取服务器当前月（Asia/Shanghai）",
-        examples=["2026-11"],
-    ),
-    limit: int = Query(
-        default=5,
-        ge=1,
-        le=20,
-        description="每个排名类型返回前 N 名，默认 5",
-    ),
-) -> Any:
+def _rank_payload(source: RankSource, month: str | None, limit: int) -> Any:
+    """按榜单类型取当月前 N 名（top / gain / loss），失败时返回 error_response。"""
     try:
         month_key, _start, _end = _month_bounds(month)
     except ValueError as exc:
@@ -258,8 +265,10 @@ def download_rank(
     sql = f"""
         SELECT rank_category, rank_no, app_id, app_name, icon, distribution_type,
                tag_1, tag_2, tag_3,
-               total_download, prev_total_download, diff_download
-          FROM {DOWNLOAD_RANK_TABLE}
+               {source.total} AS total_value,
+               {source.prev} AS prev_value,
+               {source.diff} AS diff_value
+          FROM {source.table}
          WHERE period_type = 'monthly'
            AND crawled_at = '{month_key}'
            AND rank_category IN ({category_list})
@@ -272,7 +281,7 @@ def download_rank(
         logger.error("数据库未配置：%s", exc)
         return error_response(CODE_DB_UNAVAILABLE, str(exc), 503)
     except SqlExecutionError as exc:
-        logger.warning("下载榜查询失败：%s", exc)
+        logger.warning("%s 查询失败：%s", source.label, exc)
         return error_response(CODE_SQL_ERROR, str(exc), 400)
 
     buckets: dict[str, list[dict[str, Any]]] = {key: [] for key in RANK_CATEGORIES}
@@ -294,9 +303,10 @@ def download_rank(
                 "icon": row.get("icon"),
                 "distribution_type": _as_int(row.get("distribution_type")),
                 "tags": [tag for tag in (row.get("tag_1"), row.get("tag_2")) if tag],
-                "total_download": _as_int(row.get("total_download")),
-                "prev_total_download": _as_int(row.get("prev_total_download")),
-                "diff_download": _as_int(row.get("diff_download")),
+                # 各表列名不同（下载量 / 广告曝光），这里统一成通用键名
+                "total": _as_int(row.get("total_value")),
+                "prev": _as_int(row.get("prev_value")),
+                "diff": _as_int(row.get("diff_value")),
             }
         )
 
@@ -311,7 +321,42 @@ def download_rank(
         )[:limit]
         categories.append({"key": key, "items": items})
 
-    return ok({"month": month_key, "limit": limit, "categories": categories})
+    return ok(
+        {
+            "month": month_key,
+            "limit": limit,
+            "total_field": source.total,
+            "prev_field": source.prev,
+            "diff_field": source.diff,
+            "categories": categories,
+        }
+    )
+
+
+@routes.get("/download-rank", summary="本月下载榜 TopN（总量 / 增量 / 下滑）")
+def download_rank(
+    month: str | None = Query(
+        default=None,
+        pattern=MONTH_PATTERN,
+        description="统计月份 YYYY-MM，缺省取服务器当前月（Asia/Shanghai）",
+        examples=["2026-11"],
+    ),
+    limit: int = Query(default=5, ge=1, le=20, description="每个排名类型返回前 N 名，默认 5"),
+) -> Any:
+    return _rank_payload(DOWNLOAD_RANK, month, limit)
+
+
+@routes.get("/ad-rank", summary="本月广告曝光榜 TopN（总量 / 增量 / 下滑）")
+def ad_rank(
+    month: str | None = Query(
+        default=None,
+        pattern=MONTH_PATTERN,
+        description="统计月份 YYYY-MM，缺省取服务器当前月（Asia/Shanghai）",
+        examples=["2026-11"],
+    ),
+    limit: int = Query(default=5, ge=1, le=20, description="每个排名类型返回前 N 名，默认 5"),
+) -> Any:
+    return _rank_payload(AD_RANK, month, limit)
 
 
 # 主前缀：/api/v09/data/home（能被现有 nginx 的 /api/v09/data/ 反代规则转发）

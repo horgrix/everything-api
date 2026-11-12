@@ -89,12 +89,15 @@ def test_download_rank_groups_and_limits(client):
     assert len(by_key["top"]) == 5
     assert [item["rank_no"] for item in by_key["top"]] == [1, 2, 3, 4, 5]
     assert by_key["top"][0]["app_name"] == "柚松屋"
-    assert by_key["top"][0]["total_download"] == 568784
-    assert by_key["top"][0]["prev_total_download"] == 262734
-    assert by_key["top"][0]["diff_download"] == 306050
+    assert by_key["top"][0]["total"] == 568784
+    assert by_key["top"][0]["prev"] == 262734
+    assert by_key["top"][0]["diff"] == 306050
     assert by_key["top"][1]["tags"] == ["沙盒", "开放世界"]
-    assert by_key["gain"][1]["diff_download"] == 135346
-    assert by_key["loss"][0]["diff_download"] == -1381013
+    assert by_key["gain"][1]["diff"] == 135346
+    assert by_key["loss"][0]["diff"] == -1381013
+    # 字段名随数据源透出，前端按它取数
+    assert data["total_field"] == "total_download"
+    assert data["diff_field"] == "diff_download"
 
 
 def test_download_rank_ignores_other_periods(client):
@@ -108,3 +111,34 @@ def test_download_rank_limit_bounds(client):
     assert client.get(RANK_PATH, params={"limit": 21}).status_code == 400
     body = client.get(RANK_PATH, params={"month": "2026-11", "limit": 1}).json()
     assert [len(c["items"]) for c in body["data"]["categories"]] == [1, 1, 1]
+
+
+AD_RANK_PATH = "/api/v09/data/home/ad-rank"
+
+
+def test_ad_rank_uses_view_fields(client):
+    body = client.get(AD_RANK_PATH, params={"month": "2026-11", "limit": 5}).json()
+    assert body["code"] == 0
+    data = body["data"]
+    assert [c["key"] for c in data["categories"]] == ["top", "gain", "loss"]
+    by_key = {c["key"]: c["items"] for c in data["categories"]}
+
+    # 广告榜每榜只有 3/2/2 条测试数据，不足 limit 时按实际条数返回
+    assert len(by_key["top"]) == 3
+    assert by_key["top"][0]["app_name"] == "燕云十六声"
+    assert by_key["top"][0]["total"] == 585
+    assert by_key["top"][0]["prev"] == 684
+    assert by_key["top"][0]["diff"] == -99
+    assert by_key["gain"][0]["diff"] == 297
+    assert by_key["loss"][0]["diff"] == -581
+
+    # 列名与下载榜不同，接口透出字段名供前端对齐
+    assert data["total_field"] == "total_views"
+    assert data["prev_field"] == "prev_total_views"
+    assert data["diff_field"] == "diff_views"
+
+
+def test_ad_rank_rejects_bad_month(client):
+    resp = client.get(AD_RANK_PATH, params={"month": "2026-1"})
+    assert resp.status_code == 400
+    assert resp.json()["code"] == 40000
