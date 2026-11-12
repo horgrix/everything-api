@@ -45,6 +45,7 @@ ACTIVE_STAT_TABLE = "dws_taptap_active_game_stat"
 DOWNLOAD_REPORT_TABLE = "dws_taptap_download_periodic_report"
 ONLINE_REPORT_TABLE = "dws_taptap_pc_online_peak_players_periodic_report"
 AD_REPORT_TABLE = "dws_taptap_ad_aggr_v6_periodic_report"
+DOWNLOAD_RANK_TABLE = "dws_taptap_download_periodic_rank"
 
 # 活跃 APP 的 4 个指标列
 ACTIVE_COLUMNS = (
@@ -59,6 +60,9 @@ _MONTH_RE = re.compile(MONTH_PATTERN)
 
 # distribution_type：0 商业 / 1 独立 / 2 Maker
 DIST_TYPES = ("0", "1", "2")
+
+# 下载榜的三种排名：总量榜 / 增量榜 / 下滑榜（顺序即前端展示顺序）
+RANK_CATEGORIES = ("top", "gain", "loss")
 
 
 def _current_month() -> str:
@@ -229,6 +233,86 @@ def type_share(
         "unclassified": unclassified,
     }
     return ok(payload, total=len(payload["types"]))
+
+@routes.get("/download-rank", summary="本月下载榜 TopN（总量 / 增量 / 下滑）")
+def download_rank(
+    month: str | None = Query(
+        default=None,
+        pattern=MONTH_PATTERN,
+        description="统计月份 YYYY-MM，缺省取服务器当前月（Asia/Shanghai）",
+        examples=["2026-11"],
+    ),
+    limit: int = Query(
+        default=5,
+        ge=1,
+        le=20,
+        description="每个排名类型返回前 N 名，默认 5",
+    ),
+) -> Any:
+    try:
+        month_key, _start, _end = _month_bounds(month)
+    except ValueError as exc:
+        return error_response(40000, str(exc), 400)
+
+    category_list = ", ".join(f"'{key}'" for key in RANK_CATEGORIES)
+    sql = f"""
+        SELECT rank_category, rank_no, app_id, app_name, icon, distribution_type,
+               tag_1, tag_2, tag_3,
+               total_download, prev_total_download, diff_download
+          FROM {DOWNLOAD_RANK_TABLE}
+         WHERE period_type = 'monthly'
+           AND crawled_at = '{month_key}'
+           AND rank_category IN ({category_list})
+           AND rank_no <= {int(limit)}
+         ORDER BY rank_category ASC, rank_no ASC
+    """
+    try:
+        rows = _query(sql, max_rows=200)
+    except ConfigError as exc:
+        logger.error("数据库未配置：%s", exc)
+        return error_response(CODE_DB_UNAVAILABLE, str(exc), 503)
+    except SqlExecutionError as exc:
+        logger.warning("下载榜查询失败：%s", exc)
+        return error_response(CODE_SQL_ERROR, str(exc), 400)
+
+    buckets: dict[str, list[dict[str, Any]]] = {key: [] for key in RANK_CATEGORIES}
+    seen: dict[str, set[tuple[Any, Any]]] = {key: set() for key in RANK_CATEGORIES}
+    for row in rows:
+        category = str(row.get("rank_category") or "").strip()
+        if category not in buckets:
+            continue
+        # 同月同榜可能有多条同 rank_no / 同 app 的残留行，按 (rank_no, app_id) 去重
+        key = (_as_int(row.get("rank_no")), _as_int(row.get("app_id")))
+        if key in seen[category]:
+            continue
+        seen[category].add(key)
+        buckets[category].append(
+            {
+                "rank_no": key[0],
+                "app_id": key[1],
+                "app_name": row.get("app_name"),
+                "icon": row.get("icon"),
+                "distribution_type": _as_int(row.get("distribution_type")),
+                "tags": [tag for tag in (row.get("tag_1"), row.get("tag_2")) if tag],
+                "total_download": _as_int(row.get("total_download")),
+                "prev_total_download": _as_int(row.get("prev_total_download")),
+                "diff_download": _as_int(row.get("diff_download")),
+            }
+        )
+
+    categories = []
+    for key in RANK_CATEGORIES:
+        items = sorted(
+            buckets[key],
+            key=lambda item: (
+                item["rank_no"] if item["rank_no"] is not None else 1_000_000,
+                item["app_id"] if item["app_id"] is not None else 0,
+            ),
+        )[:limit]
+        categories.append({"key": key, "items": items})
+
+    return ok({"month": month_key, "limit": limit, "categories": categories})
+
 
 # 主前缀：/api/v09/data/home（能被现有 nginx 的 /api/v09/data/ 反代规则转发）
 router = APIRouter(prefix="/api/v09/data/home", tags=["home"])

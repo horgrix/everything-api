@@ -70,3 +70,41 @@ def test_type_share_prefix_aliases(client):
         alias = client.get(path, params={"month": "2026-11"}).json()
         assert alias["code"] == 0, path
         assert alias["data"] == direct["data"], path
+
+
+RANK_PATH = "/api/v09/data/home/download-rank"
+
+
+def test_download_rank_groups_and_limits(client):
+    body = client.get(RANK_PATH, params={"month": "2026-11", "limit": 5}).json()
+    assert body["code"] == 0
+    data = body["data"]
+    assert data["month"] == "2026-11"
+    assert data["limit"] == 5
+    # 顺序固定 top → gain → loss
+    assert [c["key"] for c in data["categories"]] == ["top", "gain", "loss"]
+
+    by_key = {c["key"]: c["items"] for c in data["categories"]}
+    # limit=5 截断：测试数据里 top 有 6 条（且含 1 条重复行）
+    assert len(by_key["top"]) == 5
+    assert [item["rank_no"] for item in by_key["top"]] == [1, 2, 3, 4, 5]
+    assert by_key["top"][0]["app_name"] == "柚松屋"
+    assert by_key["top"][0]["total_download"] == 568784
+    assert by_key["top"][0]["prev_total_download"] == 262734
+    assert by_key["top"][0]["diff_download"] == 306050
+    assert by_key["top"][1]["tags"] == ["沙盒", "开放世界"]
+    assert by_key["gain"][1]["diff_download"] == 135346
+    assert by_key["loss"][0]["diff_download"] == -1381013
+
+
+def test_download_rank_ignores_other_periods(client):
+    body = client.get(RANK_PATH, params={"month": "2026-11"}).json()
+    names = [item["app_name"] for c in body["data"]["categories"] for item in c["items"]]
+    assert "上月第一名" not in names
+
+
+def test_download_rank_limit_bounds(client):
+    assert client.get(RANK_PATH, params={"limit": 0}).status_code == 400
+    assert client.get(RANK_PATH, params={"limit": 21}).status_code == 400
+    body = client.get(RANK_PATH, params={"month": "2026-11", "limit": 1}).json()
+    assert [len(c["items"]) for c in body["data"]["categories"]] == [1, 1, 1]

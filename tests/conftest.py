@@ -13,6 +13,15 @@ _TMP_DIR = Path(tempfile.mkdtemp(prefix="everything-api-test-"))
 _DB_PATH = _TMP_DIR / "test.db"
 
 
+def _rank(category, rank_no, app_id, app_name, dist, tag1, tag2,
+          total, prev, diff, month="2026-11"):
+    """造一条下载榜行（monthly）。"""
+    return (
+        "monthly", month, category, rank_no, app_id, app_name, f"icon-{app_id}.png",
+        dist, tag1, tag2, total, prev, diff,
+    )
+
+
 def _seed() -> None:
     conn = sqlite3.connect(_DB_PATH)
     try:
@@ -132,6 +141,57 @@ def _seed() -> None:
                 ("monthly", "2026-11", "dist", "1", 1, 73),
                 ("monthly", "2026-11", "dist", "(未分类)", 21, 89),
                 ("monthly", "2026-11", "tag", "三国", 1, 1),
+            ],
+        )
+
+        # 首页概览：下载榜（top / gain / loss，每月每榜 rank_no 1..50）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_download_periodic_rank (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                rank_category TEXT NOT NULL,
+                rank_no INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                app_name TEXT NULL,
+                icon TEXT NULL,
+                distribution_type INTEGER NULL,
+                tag_1 TEXT NULL,
+                tag_2 TEXT NULL,
+                tag_3 TEXT NULL,
+                total_download INTEGER NULL,
+                prev_total_download INTEGER NULL,
+                diff_download INTEGER NULL,
+                is_active INTEGER NULL,
+                updated_at TEXT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_download_periodic_rank "
+            "(period_type, crawled_at, rank_category, rank_no, app_id, app_name, icon, "
+            " distribution_type, tag_1, tag_2, total_download, prev_total_download, "
+            " diff_download) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                # 当月：每个榜 6 条，验证 limit=5 截断
+                _rank("top", 1, 1007673, "柚松屋", 0, "模拟", None, 568784, 262734, 306050),
+                _rank("top", 2, 43639, "我的世界", 0, "沙盒", "开放世界",
+                      457309, 1838322, -1381013),
+                _rank("top", 3, 165287, "Phigros", 0, "音乐", None, 286374, 1288645, -1002271),
+                _rank("top", 4, 995770, "网约车", 1, "模拟", None, 283315, 259971, 23344),
+                _rank("top", 5, 168332, "原神", 0, "角色扮演", None,
+                      214460, 659879, -445419),
+                _rank("top", 6, 999999, "第六名", 2, "模拟", None, 100000, 0, 100000),
+                # 同 rank_no 的残留重复行，应被去重
+                _rank("top", 1, 1007673, "柚松屋", 0, "模拟", None, 568784, 262734, 306050),
+                _rank("gain", 1, 1007673, "柚松屋", 0, "模拟", None, 568784, 262734, 306050),
+                _rank("gain", 2, 41333, "韵律源点", 0, "音乐", None, 135346, 0, 135346),
+                _rank("loss", 1, 43639, "我的世界", 0, "沙盒", "开放世界",
+                      457309, 1838322, -1381013),
+                _rank("loss", 2, 165287, "Phigros", 0, "音乐", None, 286374, 1288645, -1002271),
+                # 上月行不应混进当月结果
+                _rank("top", 1, 111, "上月第一名", 0, "模拟", None, 999, 0, 999, month="2026-10"),
             ],
         )
 
