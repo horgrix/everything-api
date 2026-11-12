@@ -119,17 +119,20 @@ curl -X POST http://127.0.0.1:8000/api/v09/data/sql \
 
 `total` 是本次返回的行数，`truncated` 为 `true` 表示命中上限、结果被截断（还有更多行）。
 
-### 2. 首页概览聚合 — `GET /api/v09/home/*`
+### 2. 首页概览聚合 — `GET /api/v09/data/home/*`
 
-首页两块概览卡原来由前端直连 MySQL 拼 SQL，现改为服务端聚合（另有 `/api/home/*` 别名，方便 nginx 原样转发）：
+首页两块概览卡原来由前端直连 MySQL 拼 SQL，现改为服务端聚合。
+
+主前缀挂在 `/api/v09/data/home` 下 —— 线上 nginx 只反代了 `/api/v09/data/`，这样不必新增 location；
+同时保留 `/api/v09/home`、`/api/home` 两个别名（不进 openapi），以后 nginx 怎么放行都能用：
 
 | 路径 | 说明 | 数据源 |
 |------|------|--------|
-| `GET /api/v09/home/active-apps?month=YYYY-MM` | 本月采集活跃 APP 数：月度快照（`ad_app_cnt` / `download_app_cnt` / `online_players_app_cnt` / `reserve_app_cnt`）+ 本月每日明细 | `dws_taptap_active_game_stat`（`period_type='monthly'` 与 `'daily'`） |
-| `GET /api/v09/home/type-share?month=YYYY-MM` | 本月游戏类型占比（dist 0 商业 / 1 独立 / 2 Maker）的下载量、在线峰值、广告曝光，另含三类合计与「未分类」归集 | `dws_taptap_download_periodic_report`、`dws_taptap_pc_online_peak_players_periodic_report`、`dws_taptap_ad_aggr_v6_periodic_report`（`period_type='monthly'` + `category_type='dist'`） |
+| `GET /api/v09/data/home/active-apps?month=YYYY-MM` | 本月采集活跃 APP 数：月度快照（`ad_app_cnt` / `download_app_cnt` / `online_players_app_cnt` / `reserve_app_cnt`）+ 本月每日明细 | `dws_taptap_active_game_stat`（`period_type='monthly'` 与 `'daily'`） |
+| `GET /api/v09/data/home/type-share?month=YYYY-MM` | 本月游戏类型占比（dist 0 商业 / 1 独立 / 2 Maker）的下载量、在线峰值、广告曝光，另含三类合计与「未分类」归集 | `dws_taptap_download_periodic_report`、`dws_taptap_pc_online_peak_players_periodic_report`、`dws_taptap_ad_aggr_v6_periodic_report`（`period_type='monthly'` + `category_type='dist'`） |
 
 ```bash
-curl 'http://127.0.0.1:8000/api/v09/home/active-apps?month=2026-11'
+curl 'http://127.0.0.1:8000/api/v09/data/home/active-apps?month=2026-11'
 # {"code":0,"message":"success","data":{
 #   "month":"2026-11",
 #   "monthly":{"ad_app_cnt":113,"download_app_cnt":885,"online_players_app_cnt":763,"reserve_app_cnt":206},
@@ -137,7 +140,7 @@ curl 'http://127.0.0.1:8000/api/v09/home/active-apps?month=2026-11'
 #             "online_players_app_cnt":null,"reserve_app_cnt":null}, ...],
 #   "latest_day":"2026-11-11"}}
 
-curl 'http://127.0.0.1:8000/api/v09/home/type-share?month=2026-11'
+curl 'http://127.0.0.1:8000/api/v09/data/home/type-share?month=2026-11'
 # {"code":0,"message":"success","data":{
 #   "month":"2026-11",
 #   "types":[{"dist":"0","download_total":5366097,"peak_online_players":115069,

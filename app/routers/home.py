@@ -1,8 +1,9 @@
 """首页概览接口（服务端聚合，前端不再直连 MySQL 拼 SQL）。
 
-两个只读接口：
-- `GET /api/v09/home/active-apps`  本月「采集活跃 APP 数」（4 个指标）
-- `GET /api/v09/home/type-share`   本月「游戏类型占比」（商业 / 独立 / Maker）
+两个只读接口（挂在 `/api/v09/data/home` 下 —— 线上 nginx 只反代了 `/api/v09/data/`，
+这样不用改 nginx 就能生效；另外保留 `/api/v09/home` 与 `/api/home` 两个别名）：
+- `GET .../home/active-apps`  本月「采集活跃 APP 数」（4 个指标）
+- `GET .../home/type-share`   本月「游戏类型占比」（商业 / 独立 / Maker）
 
 数据源（均为 MySQL 的预聚合物化表，按 `period_type='monthly'` 取当月快照）：
 - `dws_taptap_active_game_stat`                       活跃 APP 计数（monthly + daily）
@@ -229,8 +230,12 @@ def type_share(
     }
     return ok(payload, total=len(payload["types"]))
 
-# 主前缀 + 别名（别名不进 openapi，避免文档里出现两遍）
-router = APIRouter(prefix="/api/v09/home", tags=["home"])
+# 主前缀：/api/v09/data/home（能被现有 nginx 的 /api/v09/data/ 反代规则转发）
+router = APIRouter(prefix="/api/v09/data/home", tags=["home"])
 router.include_router(routes)
-alias_router = APIRouter(prefix="/api/home")
+
+# 别名：/api/v09/home、/api/home（不进 openapi，避免文档里出现三遍）
+alias_router = APIRouter(prefix="/api/v09/home")
 alias_router.include_router(routes)
+alias_router_data = APIRouter(prefix="/api/home")
+alias_router_data.include_router(routes)

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-ACTIVE_PATH = "/api/v09/home/active-apps"
-SHARE_PATH = "/api/v09/home/type-share"
+ACTIVE_PATH = "/api/v09/data/home/active-apps"
+SHARE_PATH = "/api/v09/data/home/type-share"
 
 
 def test_active_apps_returns_monthly_and_daily(client):
@@ -63,8 +63,10 @@ def test_type_share_aggregates_three_dims(client):
     assert data["unclassified"]["ad_views"] == 89
 
 
-def test_type_share_has_api_home_alias(client):
+def test_type_share_prefix_aliases(client):
+    """主前缀 /api/v09/data/home 与两个别名返回同一份数据。"""
     direct = client.get(SHARE_PATH, params={"month": "2026-11"}).json()
-    alias = client.get("/api/home/type-share", params={"month": "2026-11"}).json()
-    assert alias["code"] == 0
-    assert alias["data"] == direct["data"]
+    for path in ("/api/v09/home/type-share", "/api/home/type-share"):
+        alias = client.get(path, params={"month": "2026-11"}).json()
+        assert alias["code"] == 0, path
+        assert alias["data"] == direct["data"], path
