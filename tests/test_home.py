@@ -63,13 +63,11 @@ def test_type_share_aggregates_three_dims(client):
     assert data["unclassified"]["ad_views"] == 89
 
 
-def test_type_share_prefix_aliases(client):
-    """主前缀 /api/v09/data/home 与两个别名返回同一份数据。"""
-    direct = client.get(SHARE_PATH, params={"month": "2026-11"}).json()
+def test_type_share_route_is_only_under_data_prefix(client):
+    """只保留 /api/v09/data/home 前缀（旧别名已按 30a9706 移除）。"""
+    assert client.get(SHARE_PATH, params={"month": "2026-11"}).json()["code"] == 0
     for path in ("/api/v09/home/type-share", "/api/home/type-share"):
-        alias = client.get(path, params={"month": "2026-11"}).json()
-        assert alias["code"] == 0, path
-        assert alias["data"] == direct["data"], path
+        assert client.get(path, params={"month": "2026-11"}).status_code == 404, path
 
 
 RANK_PATH = "/api/v09/data/home/download-rank"
