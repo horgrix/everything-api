@@ -35,6 +35,106 @@ def _seed() -> None:
                 ("火炬之光", 1500, "2026-10-02"),
             ],
         )
+        # 首页概览：活跃 APP 计数表（monthly + daily 两种 period_type）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_active_game_stat (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                ad_app_cnt INTEGER NULL,
+                download_app_cnt INTEGER NULL,
+                online_players_app_cnt INTEGER NULL,
+                reserve_app_cnt INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_active_game_stat "
+            "(period_type, crawled_at, ad_app_cnt, download_app_cnt, "
+            " online_players_app_cnt, reserve_app_cnt) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("monthly", "2026-11", 113, 885, 763, 206),
+                ("daily", "2026-11-01", 58, 375, None, None),
+                ("daily", "2026-11-02", 59, 391, None, None),
+                ("daily", "2026-11-11", 64, 638, 645, 95),
+                # 上月行不应被当月窗口取到
+                ("monthly", "2026-10", 151, 1169, None, None),
+            ],
+        )
+
+        # 首页概览：三张 periodic_report（只造 dist 维度，够验证聚合与未分类归集）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_download_periodic_report (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                category_type TEXT NOT NULL,
+                category_value TEXT NOT NULL,
+                game_cnt INTEGER NULL,
+                download_total INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_download_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, game_cnt, download_total) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("monthly", "2026-11", "dist", "0", 443, 5366097),
+                ("monthly", "2026-11", "dist", "1", 151, 1227639),
+                ("monthly", "2026-11", "dist", "2", 162, 1397506),
+            ],
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_periodic_report (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                category_type TEXT NOT NULL,
+                category_value TEXT NOT NULL,
+                game_cnt INTEGER NULL,
+                peak_online_players INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, game_cnt, "
+            " peak_online_players) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("monthly", "2026-11", "dist", "0", 338, 115069),
+                ("monthly", "2026-11", "dist", "1", 230, 12683),
+                ("monthly", "2026-11", "dist", "2", 262, 16711),
+            ],
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_ad_aggr_v6_periodic_report (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                category_type TEXT NOT NULL,
+                category_value TEXT NOT NULL,
+                app_cnt INTEGER NULL,
+                total_views INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_ad_aggr_v6_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, app_cnt, total_views) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("monthly", "2026-11", "dist", "0", 102, 8555),
+                ("monthly", "2026-11", "dist", "1", 1, 73),
+                ("monthly", "2026-11", "dist", "(未分类)", 21, 89),
+                ("monthly", "2026-11", "tag", "三国", 1, 1),
+            ],
+        )
+
         # 访问统计表（MySQL 侧见 sql/visit_event.sql，这里放 SQLite 等价结构）
         conn.execute(
             """

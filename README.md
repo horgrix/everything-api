@@ -119,18 +119,52 @@ curl -X POST http://127.0.0.1:8000/api/v09/data/sql \
 
 `total` 是本次返回的行数，`truncated` 为 `true` 表示命中上限、结果被截断（还有更多行）。
 
-### 2. 列出表 — `GET /api/v09/data/tables`
+### 2. 首页概览聚合 — `GET /api/v09/home/*`
+
+首页两块概览卡原来由前端直连 MySQL 拼 SQL，现改为服务端聚合（另有 `/api/home/*` 别名，方便 nginx 原样转发）：
+
+| 路径 | 说明 | 数据源 |
+|------|------|--------|
+| `GET /api/v09/home/active-apps?month=YYYY-MM` | 本月采集活跃 APP 数：月度快照（`ad_app_cnt` / `download_app_cnt` / `online_players_app_cnt` / `reserve_app_cnt`）+ 本月每日明细 | `dws_taptap_active_game_stat`（`period_type='monthly'` 与 `'daily'`） |
+| `GET /api/v09/home/type-share?month=YYYY-MM` | 本月游戏类型占比（dist 0 商业 / 1 独立 / 2 Maker）的下载量、在线峰值、广告曝光，另含三类合计与「未分类」归集 | `dws_taptap_download_periodic_report`、`dws_taptap_pc_online_peak_players_periodic_report`、`dws_taptap_ad_aggr_v6_periodic_report`（`period_type='monthly'` + `category_type='dist'`） |
+
+```bash
+curl 'http://127.0.0.1:8000/api/v09/home/active-apps?month=2026-11'
+# {"code":0,"message":"success","data":{
+#   "month":"2026-11",
+#   "monthly":{"ad_app_cnt":113,"download_app_cnt":885,"online_players_app_cnt":763,"reserve_app_cnt":206},
+#   "daily":[{"date":"2026-11-01","ad_app_cnt":58,"download_app_cnt":375,
+#             "online_players_app_cnt":null,"reserve_app_cnt":null}, ...],
+#   "latest_day":"2026-11-11"}}
+
+curl 'http://127.0.0.1:8000/api/v09/home/type-share?month=2026-11'
+# {"code":0,"message":"success","data":{
+#   "month":"2026-11",
+#   "types":[{"dist":"0","download_total":5366097,"peak_online_players":115069,
+#             "ad_views":8555,"game_cnt":443}, ...],
+#   "totals":{"download_total":7991242,"peak_online_players":144463,"ad_views":8628},
+#   "unclassified":{"download_total":0,"peak_online_players":0,"ad_views":89}}, "total":3}
+```
+
+口径与行为：
+
+- `month` 缺省取服务器当前月（`Asia/Shanghai`），格式 `YYYY-MM`，非法值直接 **400 / code 40000**，不静默回落
+- `types` **恒含 dist 0/1/2 三项**（当月没有该类型的行时补 0），顺序固定，前端不必判空
+- `totals` 只累加这三类；`category_value` 不在 0/1/2 的行（如广告表的「未分类」）单独归集到 `unclassified`，不进占比分母
+- 三张月表缺表/缺数时返回 `code 40001` 与数据库原文，不会伪造数据
+
+### 3. 列出表 — `GET /api/v09/data/tables`
 
 MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口查的表到底在不在」。
 
-### 3. 健康检查
+### 4. 健康检查
 
 | 路径 | 说明 |
 |------|------|
 | `GET /health` | 进程状态 + 数据库配置是否齐全，**不连库** |
 | `GET /health/db` | 真正执行 `SELECT 1`，连不上返回 503 |
 
-### 4. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`、`GET {API_STATS_PREFIX}/summary`
+### 5. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`、`GET {API_STATS_PREFIX}/summary`
 
 给 `everything-ui` 的「本周 PV/UV」组件用，主前缀 `/api/v09/stats`（与 `/api/v09/data` 并列），
 并额外挂一份 `/api/stats` 别名 —— 前端默认就请求 `https://horgrix.com/api/stats`，nginx 按原路径转发即可。
@@ -198,7 +232,7 @@ python scripts/init_visit_event.py --check   # 只看表在不在
 python scripts/init_visit_event.py          # 建表
 ```
 
-### 4.1 v1 → v2 表结构（一次性，会清空历史）
+### 5.1 v1 → v2 表结构（一次性，会清空历史）
 
 v2 相比 v1 只多一列 `visitor_src`（`cid` / `fp`），并去掉写入时的 30 分钟去重，
 所以旧结构的表无法直接沿用。确认可以清空历史数据后：
