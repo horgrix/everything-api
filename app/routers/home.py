@@ -233,9 +233,3 @@ def type_share(
 # 主前缀：/api/v09/data/home（能被现有 nginx 的 /api/v09/data/ 反代规则转发）
 router = APIRouter(prefix="/api/v09/data/home", tags=["home"])
 router.include_router(routes)
-
-# 别名：/api/v09/home、/api/home（不进 openapi，避免文档里出现三遍）
-alias_router = APIRouter(prefix="/api/v09/home")
-alias_router.include_router(routes)
-alias_router_data = APIRouter(prefix="/api/home")
-alias_router_data.include_router(routes)
