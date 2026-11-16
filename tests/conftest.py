@@ -152,7 +152,8 @@ def _seed() -> None:
                 game_cnt INTEGER NULL,
                 peak_online_players INTEGER NULL,
                 avg_online_players REAL NULL,
-                updated_at TEXT NULL
+                updated_at TEXT NULL,
+                peak_hour TEXT NULL
             )
             """
         )
@@ -183,6 +184,20 @@ def _seed() -> None:
                 ("weekly", "2026-46", "dist", "0", 539, 127110, 68139.58, None),
                 ("weekly", "2026-46", "dist", "1", 151, 8633, 6613.48, None),
                 ("weekly", "2026-46", "dist", "2", 177, 11186, 8470.87, None),
+            ],
+        )
+        # dist_peak：同一小时的快照，三项在线之和恒等于 all 行（DWS 每天重算）
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, game_cnt, "
+            " peak_online_players, peak_hour) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-45", "dist_peak", "0", 443, 113272, "2026-11-08 20"),
+                ("weekly", "2026-45", "dist_peak", "1", 63, 5842, "2026-11-08 20"),
+                ("weekly", "2026-45", "dist_peak", "2", 70, 6583, "2026-11-08 20"),
+                ("weekly", "2026-46", "dist_peak", "0", 440, 127110, "2026-11-13 22"),
+                ("weekly", "2026-46", "dist_peak", "1", 94, 8526, "2026-11-13 22"),
+                ("weekly", "2026-46", "dist_peak", "2", 119, 10718, "2026-11-13 22"),
             ],
         )
         # 定期报告：全局峰值那一小时的同小时快照（W46 = 11-13 22 点，653 款 / 146,354 人）

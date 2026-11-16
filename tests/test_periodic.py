@@ -244,3 +244,33 @@ def test_active_filter_applies_only_where_column_exists(client):
     assert periodic._active_filter(periodic.AD_TABLE) == " AND COALESCE(is_active, 1) = 1"
     # 下载/在线周期表在夹具里没有 is_active 列 → 不得凭空加条件（线上加列后会自动生效）
     assert periodic._active_filter(periodic.DOWNLOAD_TABLE) == ""
+
+
+def test_peak_hour_prefers_dist_peak_and_breakdown_marks_summable(client):
+    """peakHour 优先读 dist_peak（W45 也有值），分型拆解标明可否相加。"""
+    payload = _report(client)["data"]
+    online = next(line for line in payload["lines"] if line["key"] == "online")
+
+    peak = online["peakHour"]
+    assert peak["crawledAt"] == "2026-11-13 22"
+    assert peak["sumsMatch"] is True
+    # 该小时按分型去重的 653 款 ≠ 整周去重的 860 款，两个数都要在
+    assert peak["gameCnt"] == 653
+    assert online["kpis"][2]["value"] == 860
+
+    # 在线分型是「各自峰值」，结构上不可加：gapPct 不是数据质量问题
+    assert online["breakdown"]["consistency"]["summable"] is False
+    assert "peakHour" in online["breakdown"]["consistency"]["note"]
+
+    download = next(line for line in payload["lines"] if line["key"] == "download")
+    assert download["breakdown"]["consistency"]["summable"] is True
+    assert download["breakdown"]["consistency"]["gapPct"] == 0
+
+    # W45 明细里 11-07 那段已清掉，但 dist_peak 给的是 11-08 20 点，仍有值
+    older = _report(client, key="2026-45")["data"]
+    older_peak = next(
+        line for line in older["lines"] if line["key"] == "online"
+    )["peakHour"]
+    assert older_peak["crawledAt"] == "2026-11-08 20"
+    assert older_peak["sumPeakOnlinePlayers"] == 125697
+    assert older_peak["sumsMatch"] is True

@@ -281,9 +281,22 @@ W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻
  "breakdown":[{"distributionType":"0","label":"商业游戏","gameCnt":440,"peakOnlinePlayers":127110}, …]}
 ```
 
-分型拆解默认给的是「每个分型各自周内峰值」（W46 相加 146,929 > 总峰值 146,354，
-不同时刻的东西不能相加）；`peakHour` 给的是全局峰值那一小时的同小时快照，**可以堆叠**，
-`sumsMatch=false` 时可当作口径被动过的告警。
+来源是周期表里 DWS 每天重算的 `category_type='dist_peak'` 行（同小时快照），
+取不到时回退到「明细表 + v2 汇总」现算，两者都失败则字段缺省。
+
+**一条铁律**：占比 / 堆叠 / 合计只能用 `peakHour`。
+
+| 字段 | 含义 | 能否相加 |
+|------|------|----------|
+| `lines[online].breakdown` | 每个分型**各自**的周内峰值峰值 | ❌ 峰值不在同一小时（W46 相加 146,929 > 146,354） |
+| `lines[online].peakHour` | 全局峰值那一小时的同小时快照 | ✅ Σ 恒等于该期总峰值 |
+
+`breakdown.consistency` 里现在带 `summable` 与 `note`：在线线是 `summable=false`
+（`gapPct=0.39` 是结构性结果，**不是数据质量问题，别标红**），下载/广告是 `true`。
+`peakHour.sumsMatch=false` 才是真告警（同小时快照都加不平 = 口径被动过）。
+
+W45 的 `peakHour` 是 `2026-11-08 20`（576 款 / 125,697 人），不是概览表的 133,480：
+后者来自 11-07 20 点，那天的明细已被清理，不参与分型。
 
 与 `report-metric-spec.json` 的对应关系：KPI key 完全一致；spec 里的 `qualityFlags`
 就是本接口顶层的 `flags`（同一组 `{level,item,label,detail,action}` 对象）。
