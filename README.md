@@ -250,6 +250,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   2026-11：窗口 11-08~11-15 = 96 点、实采 92 → **96%**（不告警），另有 `info` 说明期初无源。
   窗口末端取期末（进行中的期取昨天）而不是「末采样日」：否则采集中途挂掉时窗口会跟着缩短，
   反而算出 100% 假绿。
+
+  覆盖类 flag 都带 `scope`（`current` / `previous`）与 `relatedPeriod`，钉死它讲的是哪一期：
+  查 W46 时会附一条讲 W45 的 flag（解释「为什么本期没有环比」），`scope=previous` 时 `level`
+  是 `info` 而不是 `medium`，巡检/告警按 `scope` 过滤即可，不会把上期的问题当本期告警。
 - PC 在线榜的维度参数是 **`list_type`（下划线）**；传 `listType` 会 400 并提示正确写法
   （FastAPI 会静默忽略拼错的 query 参数，那样只会拿到混合分组榜单而看不出来）
 - **旧维度查历史周**：`list_type=pc_played / pc_emulator_played / app_hot_creative` 的行

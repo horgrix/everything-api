@@ -1435,8 +1435,14 @@ def report(
             is_current = flagged is current
             coverage_flags.append(
                 {
-                    "level": "medium",
+                    # 上一期的问题只解释「本期为什么没有环比」，不是本期的告警
+                    "level": "medium" if is_current else "info",
                     "item": f"{source.key}_partial_coverage",
+                    # scope + relatedPeriod 钉死这条 flag 讲的是哪一期：
+                    # W46 的响应里会带一条讲 W45 的 flag，没有这两个字段时
+                    # 消费方会把 W45 的属性当成 W46 的
+                    "scope": "current" if is_current else "previous",
+                    "relatedPeriod": period_key if is_current else prev_period,
                     "label": (
                         f"{source.label}本期采集有缺失"
                         if is_current
@@ -1455,6 +1461,8 @@ def report(
                 {
                     "level": "info",
                     "item": f"{source.key}_source_start",
+                    "scope": "current",
+                    "relatedPeriod": period_key,
                     "label": f"{source.label}数据起点晚于期初",
                     "detail": (
                         f"在线数据自 {current['sourceStart']} 起才开始采集，"

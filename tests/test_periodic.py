@@ -233,6 +233,10 @@ def test_online_metric_decisions(client):
     # 覆盖拆成三个信号：窗口内完整性（唯一告警项）、源起点（info）、新鲜度（meta.updatedAt）
     coverage = next(f for f in payload["flags"] if f["item"] == "online_partial_coverage")
     assert coverage["reason"] == "collection_gap"
+    # W46 的响应里这条讲的是上期 W45：scope=previous、level=info（只解释没有环比的原因）
+    assert coverage["scope"] == "previous"
+    assert coverage["relatedPeriod"] == "2026-45"
+    assert coverage["level"] == "info"
     # W45 采集窗口只有 11-08 一天 = 12 点，实采 8 → 8/12 = 67%，窗口内确有缺失
     assert "8/12" in coverage["detail"]
     assert "8/84" in coverage["detail"]          # 期口径同时给出，供参考
@@ -244,6 +248,11 @@ def test_online_metric_decisions(client):
     # 源起点单独成 info flag（本期期初 < 在线数据起点）
     source = next(f for f in older["flags"] if f["item"] == "online_source_start")
     assert source["level"] == "info"
+    assert source["scope"] == "current" and source["relatedPeriod"] == "2026-45"
+    # W45 自己那期：窗口内真缺采 → medium + scope=current
+    own = next(f for f in older["flags"] if f["item"] == "online_partial_coverage")
+    assert own["level"] == "medium" and own["scope"] == "current"
+    assert own["relatedPeriod"] == "2026-45"
     assert "2026-11-08" in source["detail"]
     assert older_online["coverage"]["sourceStartsLate"] is True
     assert older_kpis["online_game_cnt"]["value"] == 581
