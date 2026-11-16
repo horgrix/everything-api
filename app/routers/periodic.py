@@ -291,6 +291,27 @@ def _query(sql: str, max_rows: int = 5000) -> list[dict[str, Any]]:
     return run_query(sql, max_rows=max_rows).rows
 
 
+# 表→列名集合（表结构不会在进程存活期间变），用来判断该不该加 is_active 过滤
+_COLUMNS: dict[str, set[str]] = {}
+
+
+def _columns_of(table: str) -> set[str]:
+    """取表的列名（每表只查一次）。顺便兼容 MySQL / 测试用 SQLite。"""
+    if table in _COLUMNS:
+        return _COLUMNS[table]
+    try:
+        columns = set(run_query(f"SELECT * FROM {table} LIMIT 0", max_rows=1).columns)
+    except SqlExecutionError:  # 表不存在/无权限：交给真正的查询去报错
+        return set()
+    _COLUMNS[table] = columns
+    return columns
+
+
+def _active_filter(table: str) -> str:
+    """表里 is_active 列时只取有效行：DWS 下线残留是置 0 不删数据。"""
+    return " AND is_active = 1" if "is_active" in _columns_of(table) else ""
+
+
 def _validate_period(period_type: str, key: str | None) -> str | None:
     """校验期键格式；不合法抛 ValueError。"""
     if not key or key == "latest":
@@ -413,10 +434,11 @@ def _load_line_rows(period_type: str) -> dict[str, dict[str, dict[str, Any]]]:
     result: dict[str, dict[str, dict[str, Any]]] = {}
     for source in LINE_SOURCES:
         columns = ", ".join(metric.column for metric in source.metrics)
+        active = _active_filter(source.table)
         sql = f"""
             SELECT crawled_at, {columns}, updated_at
               FROM {source.table}
-             WHERE period_type = '{period_type}' AND category_type = 'all'
+             WHERE period_type = '{period_type}' AND category_type = 'all'{active}
              ORDER BY crawled_at
         """
         rows = _query(sql)
@@ -444,6 +466,7 @@ def _load_overview() -> dict[str, dict[str, Any]]:
                heartopia_download_total, heartopia_avg_online_players,
                updated_at
           FROM {OVERVIEW_TABLE}
+         {('WHERE is_active = 1' if 'is_active' in _columns_of(OVERVIEW_TABLE) else '')}
          ORDER BY week_key
     """
     series: dict[str, dict[str, Any]] = {}
@@ -466,7 +489,7 @@ def _load_breakdown(
                {source.breakdown_column} AS value, {source.games_column} AS games
           FROM {source.table}
          WHERE period_type = '{period_type}' AND category_type = 'dist'
-           AND crawled_at IN ({quoted})
+           AND crawled_at IN ({quoted}){_active_filter(source.table)}
     """
     grouped: dict[str, dict[str, dict[str, Any]]] = {key: {} for key in keys}
     for row in _query(sql):

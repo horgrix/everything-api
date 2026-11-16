@@ -249,7 +249,8 @@ def _seed() -> None:
                 total_views INTEGER NULL,
                 ad_views INTEGER NULL,
                 pcebid_views INTEGER NULL,
-                updated_at TEXT NULL
+                updated_at TEXT NULL,
+                is_active INTEGER NULL
             )
             """
         )
@@ -381,6 +382,16 @@ def _seed() -> None:
                 ("weekly", "2026-46", "dist", "(未分类)", 14, 99, None, None, None),
             ],
         )
+        # is_active=0 的下线残留行：接口必须过滤掉（DWS 的规矩是置 0 不删数据）
+        conn.execute(
+            "UPDATE dws_taptap_ad_aggr_v6_periodic_report SET is_active = 1"
+        )
+        conn.execute(
+            "INSERT INTO dws_taptap_ad_aggr_v6_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, app_cnt, "
+            " total_views, is_active) "
+            "VALUES ('weekly', '2026-46', 'dist', '(未分类)', 7, 500, 0)"
+        )
 
         # 定期报告：概览周表（含一列已下线字段的值，验证接口不取）
         conn.execute(
@@ -423,7 +434,7 @@ def _seed() -> None:
             " heartopia_download_total, heartopia_avg_online_players, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                # W44 → W45 火炬之光下载放量 14 倍，用来验证异常放量告警
+                # 合成的 14 倍放量：只为覆盖 ≥3× 告警逻辑（线上 W45 已修正为 66,379）
                 ("2026-44", "2026-10-26", "2026-11-01", None, None,
                  86842, 11813.4, 228910, 8123.5, "2026-11-02 11:35:10"),
                 # W45 概览的在线列是旧快照（763 / 133480），线上实测与在线周期表不符

@@ -83,7 +83,10 @@ def test_report_breakdown_keeps_unclassified_out_of_share(client):
     assert sum(item["share"] for item in breakdown["items"]) == 1.0
 
     ad = next(line for line in payload["lines"] if line["key"] == "ad")
+    # 未分类只算 is_active=1 的行（夹具里额外塞了一条 is_active=0、value=500 的残留行）
     assert ad["breakdown"]["unclassifiedTotal"] == 99
+    assert ad["breakdown"]["unclassified"][0]["value"] == 99
+    assert ad["breakdown"]["unclassified"][0]["games"] == 14
     # 未分类不计入三类占比分母
     assert ad["breakdown"]["total"] == 5402 + 468
 

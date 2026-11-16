@@ -223,6 +223,8 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 - `isPartial=true` 表示这一期还没走完（月中 / 周中取数），此时 `deltaComparable=false`，环比只作参考
 - `flags` 由服务端算好，前端只负责渲染角标：概览表与在线周期表跨表不一致、按游戏单期放量（≥3×）、
   `distribution_type` 未归类、已下线列（`online_peak_pc` 等）、历史期数不足
+- 报表汇总行 / 分型行同样只看 `is_active = 1`（表里有该列时自动加过滤，没有就不加）：
+  DWS 下线残留行是「置 0 不删数据」，例如广告的 `(未分类)` 行，不过滤就会多出一个桶
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
 - 结果在进程内缓存 60 秒（`CACHE_TTL_SECONDS`），报告一天只更新几次，重复请求不再打库
 
