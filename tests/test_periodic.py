@@ -235,6 +235,8 @@ def test_online_metric_decisions(client):
     assert "84/84" not in coverage["detail"]
     # W45 起点早于在线数据起点：属于「没有源数据」，不是采集故障
     assert coverage["reason"] == "source_start"
+    # 同时给「源窗口内」的数：W45 源窗口只有 11-08 一天 = 12 点，实采 8 → 8/12
+    assert "8/12" in coverage["detail"]
 
     # W45 自身也是半周：现场置 null，而不是拿更早的期硬凑一个环比
     older = _report(client, key="2026-45")["data"]
@@ -492,3 +494,22 @@ def test_expected_samples_uses_elapsed_days_for_running_month(client):
         expected = _expected_samples("monthly", "2026-11")
         assert expected == days * SAMPLES_PER_DAY
         assert expected <= 30 * SAMPLES_PER_DAY
+
+
+def test_source_window_samples_ignores_unfinished_today(client):
+    """源窗口口径：进行中的期只算到昨天；2026-11 在 11-16 时窗口应是 11-08~11-15 = 96。"""
+    from datetime import date, timedelta
+
+    from app.routers.periodic import _source_window_samples, _today
+
+    today = _today()
+    if today == date(2026, 11, 16):
+        assert _source_window_samples("monthly", "2026-11", "2026-11-08") == 96
+    # 已结束的周：窗口就是源起点到期末
+    assert _source_window_samples("weekly", "2026-45", "2026-11-08") == 12
+    assert _source_window_samples("weekly", "2026-46", "2026-11-08") == 84
+    # 没有源起点 → 不提供窗口口径
+    assert _source_window_samples("weekly", "2026-46", None) is None
+    # 窗口起点晚于期末（未来期）→ None，不编造
+    future = (today + timedelta(days=60)).isoformat()
+    assert _source_window_samples("weekly", "2026-46", future) is None

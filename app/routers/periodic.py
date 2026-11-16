@@ -389,6 +389,27 @@ def _expected_samples(period_type: str, key: str) -> int:
     return ((last_day - start_day).days + 1) * SAMPLES_PER_DAY
 
 
+def _source_window_samples(
+    period_type: str, key: str, coverage_start: str | None
+) -> int | None:
+    """源数据存在的那段窗口里，按采集节奏应有多少个采样点。
+
+    用于回答「采集本身正常吗」：已结束的期取源起点到期末；进行中的期只算到昨天
+    （今天还没采完）。2026-11 在 11-16 时 = 11-08~11-15 共 8 天 × 12 = 96。
+    """
+    if not coverage_start:
+        return None
+    start, end = _period_range(period_type, key)
+    start_day = date.fromisoformat(start)
+    end_day = date.fromisoformat(end)
+    window_start = max(start_day, date.fromisoformat(coverage_start))
+    if end_day >= _today():  # 进行中：今天的数据不完整，窗口只算到昨天
+        end_day = _today() - timedelta(days=1)
+    if end_day < window_start:
+        return None
+    return ((end_day - window_start).days + 1) * SAMPLES_PER_DAY
+
+
 def _coverage(
     period_type: str,
     key: str,
@@ -426,7 +447,13 @@ def _coverage(
             f"（约 {ratio * 100:.0f}%，采集节奏 2 小时/次）"
         )
         if reason == "source_start":
+            # 两个数一起给：期口径（含无源的那几天）说明「整期够不够」，
+            # 窗口口径说明「有源之后采集本身正常吗」，谁也冒充不了谁
+            window = _source_window_samples(period_type, key, coverage_start)
             note += f"；在线数据自 {coverage_start} 起才有，本期更早的日期本就无源数据"
+            if window:
+                window_pct = sample_hours / window * 100
+                note += f"（源窗口内 {sample_hours}/{window}，约 {window_pct:.0f}%）"
         return True, f"{note}，覆盖不全", reason
 
     if not coverage_start:
