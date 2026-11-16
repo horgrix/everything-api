@@ -222,9 +222,9 @@ def _seed() -> None:
         )
         # dist 行：W46 条数口径 0.3404/0.5943/0.5761、人数口径 0.2122/0.74/0.7179（真库值）
         for value, ratio, player_ratio, players in (
-            ("0", 0.3404, 0.2122, 300000),
+            ("0", 0.3404, 0.2122, 1214700),
             ("1", 0.5943, 0.74, 411100),
-            ("2", 0.5761, 0.7179, 350000),
+            ("2", 0.5761, 0.7179, 510800),
         ):
             conn.execute(
                 "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
