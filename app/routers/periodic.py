@@ -455,19 +455,19 @@ def _coverage_info(
 
 
 def _coverage_level(info: dict[str, Any], is_current: bool) -> str:
-    """覆盖 flag 的严重级别。
+    """覆盖 flag 的严重级别：按「本期数字还准不准」定，不按「能不能修」定。
 
-    只有「窗口已经稳定存在、期内却采少了」才算告警（medium）。
     - 上期的问题：只解释「本期为什么没有环比」，info；
-    - 本期首日就是源起点（W45 / 2026-11）：缺的那几个点是源头刚起时的启动问题，
-      补不回来，info（仍然显示 67%，但不占告警位）；
-    - 窗口起点在源起点之后、期内却缺采：真故障，medium。
+    - 本期窗口内完整度 < 0.9：这一期的 KPI/分型都建立在残缺样本上（W45 用 8/12
+      算出了整周的 581 款），必须让人看见 —— medium，与巡检的 FAIL 结论一致；
+    - 期初无源但窗口内采得够（2026-11 的 92/96）：info。
+
+    早先按「首日启动不可修」把 W45 降成 info，和巡检「67% FAIL」直接矛盾，
+    已按「影响优先」改回。
     """
     if not is_current:
         return "info"
-    if info["gap"] and not info["sourceStartsLate"]:
-        return "medium"
-    return "info"
+    return "medium" if info["gap"] else "info"
 
 
 def _coverage_note(info: dict[str, Any], key: str) -> str | None:

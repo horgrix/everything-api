@@ -250,10 +250,9 @@ def test_online_metric_decisions(client):
     source = next(f for f in older["flags"] if f["item"] == "online_source_start")
     assert source["level"] == "info"
     assert source["scope"] == "current" and source["relatedPeriod"] == "2026-45"
-    # W45 自己那期：窗口内确缺 4 个点，但那 4 个点是源刚启动时的 00-06，
-    # 属于「首日启动」不可修，级别 info（仍显示 67%，不占告警位）
+    # W45 自己那期：窗口内只有 8/12，KPI 是拿 1 天样本当整周算的 → 必须告警（medium）
     own = next(f for f in older["flags"] if f["item"] == "online_partial_coverage")
-    assert own["level"] == "info" and own["scope"] == "current"
+    assert own["level"] == "medium" and own["scope"] == "current"
     assert own["relatedPeriod"] == "2026-45"
     assert "本期" in own["label"]        # W45 讲的是自己，不能写成「上期」
     assert "2026-11-08" in source["detail"]
@@ -552,19 +551,24 @@ def test_coverage_info_three_signals(client):
     assert unknown["ratio"] is None and unknown["gap"] is False
 
 
-def test_coverage_level_only_alarms_inside_established_window(client):
-    """告警级别：只有「窗口起点在源起点之后、期内却采少了」才是 medium。"""
+def test_coverage_level_by_impact_not_fixability(client):
+    """告警级别按「本期数字准不准」定：窗口内缺采就 medium，与巡检 FAIL 一致。"""
     from app.routers.periodic import _coverage_info, _coverage_level
 
-    # W46 假设只采到 60/84：窗口起点 = 期初（源早已存在）→ 真故障，medium
+    # 假设 W46 只采到 60/84：真故障
     broken = _coverage_info("weekly", "2026-46", 60, "2026-11-08")
     assert broken["gap"] is True and broken["sourceStartsLate"] is False
     assert _coverage_level(broken, is_current=True) == "medium"
 
-    # W45：缺的是源刚启动那几个点（不可修）→ info
+    # W45 8/12：同样是「KPI 建立在残缺样本上」，虽然不可修也必须告警
     startup = _coverage_info("weekly", "2026-45", 8, "2026-11-08")
     assert startup["gap"] is True and startup["sourceStartsLate"] is True
-    assert _coverage_level(startup, is_current=True) == "info"
+    assert _coverage_level(startup, is_current=True) == "medium"
+
+    # 2026-11 假设：窗口内够、只是期初无源 → info
+    monthly = _coverage_info("monthly", "2026-11", 92, "2026-11-08")
+    assert monthly["gap"] is False and monthly["sourceStartsLate"] is True
+    assert _coverage_level(monthly, is_current=True) == "info"
 
     # 上期的问题永不占告警位
     assert _coverage_level(broken, is_current=False) == "info"
