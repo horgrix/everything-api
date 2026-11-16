@@ -229,6 +229,8 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   `is_active` 是 `tinyint NOT NULL DEFAULT 1`，代码里用 `COALESCE(is_active,1)` 属防御性写法：
   DWS 下线残留行是「置 0 不删数据」，例如广告的 `(未分类)` 行，不过滤就会多出一个桶
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
+- PC 在线榜的维度参数是 **`list_type`（下划线）**；传 `listType` 会 400 并提示正确写法
+  （FastAPI 会静默忽略拼错的 query 参数，那样只会拿到混合分组榜单而看不出来）
 - 结果在进程内缓存 60 秒（`CACHE_TTL_SECONDS`），报告一天只更新几次，重复请求不再打库
 
 `coreKpis` 的 6 个 key（顺序固定，前端直接按 key 取，不要再拼 SQL）：
@@ -306,6 +308,11 @@ W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻
 `breakdown.consistency` 里现在带 `summable` 与 `note`：在线线是 `summable=false`
 （`gapPct=0.39` 是结构性结果，**不是数据质量问题，别标红**），下载/广告是 `true`。
 `peakHour.sumsMatch=false` 才是真告警（同小时快照都加不平 = 口径被动过）。
+
+**采集兜底值占比**：在线周期表的 `placeholder_ratio`（0~1，DWS 每天重算）会原样透出：
+`lines[online].breakdown.items[].placeholderRatio` 与 `peakHour.breakdown[].placeholderRatio`，
+`peakHour.placeholderRatio` 是整小时的口径（优先取 ALL 行）。上游没采到真值时会写 100，
+所以 **>0.5 建议 UI 标「含采集兜底值，占比仅作参考」**；其他业务线没有这个列，值为 `null`。
 
 W45 的 `peakHour` 是 `2026-11-08 20`（576 款 / 125,697 人），不是概览表的 133,480：
 后者来自 11-07 20 点，那天的明细已被清理，不参与分型。

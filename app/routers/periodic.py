@@ -494,9 +494,12 @@ def _load_breakdown(
     if not keys:
         return {}
     quoted = ", ".join(f"'{key}'" for key in keys)
+    # placeholder_ratio 只有在线报表有（采集兜底值占比），其他线自动跳过
+    ratio = "placeholder_ratio" if "placeholder_ratio" in _columns_of(source.table) else "NULL"
     sql = f"""
         SELECT crawled_at, category_value AS dist,
-               {source.breakdown_column} AS value, {source.games_column} AS games
+               {source.breakdown_column} AS value, {source.games_column} AS games,
+               {ratio} AS placeholder_ratio
           FROM {source.table}
          WHERE period_type = '{period_type}' AND category_type = 'dist'
            AND crawled_at IN ({quoted}){_active_filter(source.table)}
@@ -671,9 +674,13 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
     没有该行时退回「三项求和 + all 行峰值校验」。取不到整个字段缺省，不影响整篇报告。
     """
     table = ONLINE_TABLE
+    # placeholder_ratio：该行里「采集兜底值」的占比（上游没采到真值时写 100），新库才有
+    ratio_column = (
+        "MAX(placeholder_ratio)" if "placeholder_ratio" in _columns_of(table) else "NULL"
+    )
     sql = f"""
         SELECT category_value AS dist, game_cnt, peak_online_players,
-               MAX(peak_hour) AS peak_hour
+               MAX(peak_hour) AS peak_hour, {ratio_column} AS placeholder_ratio
           FROM {table}
          WHERE period_type = '{period_type}' AND crawled_at = '{period_key}'
            AND category_type = 'dist_peak'{_active_filter(table)}
@@ -702,6 +709,8 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
                 "label": DIST_LABELS.get(dist, UNKNOWN_DIST),
                 "gameCnt": _as_int(row.get("game_cnt")),
                 "peakOnlinePlayers": _as_int(row.get("peak_online_players")),
+                # 采集兜底值占比，0~1；>0.5 建议 UI 标「含采集兜底值，占比仅作参考」
+                "placeholderRatio": _as_float(row.get("placeholder_ratio")),
             }
         )
     breakdown.sort(
@@ -738,6 +747,16 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
             all_peak = None
         sums_match = all_peak is None or sum_players == all_peak
 
+    if total_row is not None:
+        overall_ratio = _as_float(total_row.get("placeholder_ratio"))
+    else:
+        known = [
+            item["placeholderRatio"]
+            for item in breakdown
+            if item["placeholderRatio"] is not None
+        ]
+        overall_ratio = max(known) if known else None
+
     return {
         "crawledAt": str(rows[0].get("peak_hour") or ""),
         "gameCnt": game_cnt,
@@ -746,6 +765,8 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
         "sumPeakOnlinePlayers": sum_players,
         # 表内自洽校验：Σ三项 必须等于 ALL 行（或 all 行峰值），不平就是 DWS 写坏了
         "sumsMatch": sums_match,
+        # 该小时整体的兜底值占比：ALL 行有就用它，否则取各分型里最大的一项
+        "placeholderRatio": overall_ratio,
         "breakdown": breakdown,
     }
 
@@ -787,6 +808,10 @@ def _build_breakdown(
                 ),
                 "games": _as_int((current.get(dist) or {}).get("games")),
                 "hasData": dist in current,
+                # 采集兜底值（上游没采到真值时写的 100）占比，0~1；>0.5 建议 UI 标「仅作参考」
+                "placeholderRatio": _as_float(
+                    (current.get(dist) or {}).get("placeholder_ratio")
+                ),
             }
         )
 
@@ -1296,7 +1321,20 @@ def rank(
         default=None,
         description="仅 PC 在线榜使用：dist_0/1/2（W45 起）；pc_played 等旧维度仅存于历史周",
     ),
+    listType: str | None = Query(
+        default=None,
+        include_in_schema=False,
+        description="占位：正确参数名是 list_type（下划线）",
+    ),
 ) -> Any:
+    # FastAPI 会静默忽略拼错的 query 参数，listType 会导致返回「混合分组」榜单而看不出来
+    if listType is not None:
+        return error_response(
+            CODE_BAD_REQUEST,
+            "参数名应为 list_type（下划线）；listType 会被服务端忽略并返回混合分组榜单，"
+            "因此这里直接报错而不是给你一份错数据",
+            400,
+        )
     source = RANK_SOURCES.get(line)
     if source is None:
         return error_response(CODE_BAD_REQUEST, f"未知业务线：{line}", 400)

@@ -293,3 +293,31 @@ def test_concurrent_kpi_explains_overview_lag():
     )
     assert with_value["value"] == 671
     assert "unavailableReason" not in with_value
+
+
+def test_placeholder_ratio_exposed_for_online_breakdown(client):
+    """采集兜底值占比原样透出（dist 行与 dist_peak 行都有），其他线不带这个字段。"""
+    payload = _report(client)["data"]
+    online = next(line for line in payload["lines"] if line["key"] == "online")
+
+    dist1 = next(item for item in online["breakdown"]["items"] if item["key"] == "1")
+    assert dist1["placeholderRatio"] == 0.79
+    assert online["breakdown"]["items"][0]["placeholderRatio"] == 0.0
+
+    peak = online["peakHour"]
+    assert peak["placeholderRatio"] == 0.42
+    maker = next(item for item in peak["breakdown"] if item["distributionType"] == "2")
+    assert maker["placeholderRatio"] == 0.71
+
+    download = next(line for line in payload["lines"] if line["key"] == "download")
+    assert download["breakdown"]["items"][0]["placeholderRatio"] is None
+
+
+def test_rank_rejects_camel_case_list_type(client):
+    """listType 会被 FastAPI 静默忽略并返回混合榜，这里直接给 400。"""
+    resp = client.get(
+        f"{PREFIX}/rank",
+        params={"line": "online", "period": "weekly", "key": "2026-46", "listType": "dist_1"},
+    )
+    assert resp.status_code == 400
+    assert "list_type" in resp.json()["message"]

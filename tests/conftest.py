@@ -153,7 +153,8 @@ def _seed() -> None:
                 peak_online_players INTEGER NULL,
                 avg_online_players REAL NULL,
                 updated_at TEXT NULL,
-                peak_hour TEXT NULL
+                peak_hour TEXT NULL,
+                placeholder_ratio REAL NULL
             )
             """
         )
@@ -202,6 +203,25 @@ def _seed() -> None:
                 # W45 故意不放 ALL 行，覆盖「三项求和 + all 行校验」的兼容分支
                 ("weekly", "2026-46", "dist_peak", "ALL", 653, 146354, "2026-11-13 22"),
             ],
+        )
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET placeholder_ratio = 0.0 WHERE category_type IN ('all', 'dist')"
+        )
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET placeholder_ratio = 0.79 "
+            "WHERE category_type = 'dist' AND crawled_at = '2026-46' AND category_value = '1'"
+        )
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET placeholder_ratio = 0.42 WHERE category_type = 'dist_peak'"
+        )
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET placeholder_ratio = 0.71 "
+            "WHERE category_type = 'dist_peak' AND crawled_at = '2026-46' "
+            "AND category_value = '2'"
         )
         conn.execute(
             """
