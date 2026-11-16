@@ -321,3 +321,42 @@ def test_rank_rejects_camel_case_list_type(client):
     )
     assert resp.status_code == 400
     assert "list_type" in resp.json()["message"]
+
+
+def test_rank_reads_retired_dimension_history(client):
+    """旧维度（pc_played）的行是 is_active=0，但历史周只有它们，不能被 is_active 过滤掉。"""
+    old = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-42",
+            "category": "top",
+            "list_type": "pc_played",
+        },
+    )
+    body = old.json()
+    assert old.status_code == 200
+    assert body["data"]["retiredDimension"] is True
+    assert [item["appName"] for item in body["data"]["items"]] == ["旧维度游戏"]
+
+    current = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-46",
+            "category": "top",
+            "list_type": "dist_0",
+        },
+    ).json()["data"]
+    assert current["retiredDimension"] is False
+    assert [item["appName"] for item in current["items"]] == ["新维度游戏"]
+
+    # 不传维度时只认有效行，不会把下线维度的残留混进来
+    default = client.get(
+        f"{PREFIX}/rank",
+        params={"line": "online", "period": "weekly", "key": "2026-42", "category": "top"},
+    ).json()
+    assert default["code"] == 0
+    assert default["data"]["items"] == []

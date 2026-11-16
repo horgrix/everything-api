@@ -1358,12 +1358,16 @@ def rank(
         if cached is not None:
             return cached
 
+        # 旧维度（pc_played 等）只存在于历史周，且 DWS 按规矩把它们标成 is_active=0；
+        # 查这些维度时不能再过滤 is_active，否则历史榜永远是空的
+        retired_dimension = line == "online" and list_type in RETIRED_LIST_TYPES
         filters = [
             f"period_type = '{period}'",
             f"crawled_at = '{period_key}'",
             f"rank_category = '{category}'",
-            "is_active = 1",
         ]
+        if not retired_dimension:
+            filters.append("is_active = 1")
         if line == "online" and list_type:
             filters.append(f"list_type = '{list_type}'")
         if dist:
@@ -1420,6 +1424,8 @@ def rank(
                 "periodKey": period_key,
                 "category": category,
                 "listType": list_type,
+                # true = 用的是 W45 之前的旧维度（is_active=0 的历史行）
+                "retiredDimension": line == "online" and list_type in RETIRED_LIST_TYPES,
                 "unit": source.unit,
                 "availableRows": len(items),
                 "items": items[:limit],

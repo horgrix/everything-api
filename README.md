@@ -231,6 +231,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
 - PC 在线榜的维度参数是 **`list_type`（下划线）**；传 `listType` 会 400 并提示正确写法
   （FastAPI 会静默忽略拼错的 query 参数，那样只会拿到混合分组榜单而看不出来）
+- **旧维度查历史周**：`list_type=pc_played / pc_emulator_played / app_hot_creative` 的行
+  DWS 按规矩标成 `is_active=0`，但历史周只有它们。查这些维度时接口**跳过 `is_active` 过滤**，
+  并在响应里带 `retiredDimension=true`，UI 可据此标「旧维度·仅历史期」；查 `dist_*` 时仍只取
+  `is_active=1`
 - 结果在进程内缓存 60 秒（`CACHE_TTL_SECONDS`），报告一天只更新几次，重复请求不再打库
 
 `coreKpis` 的 6 个 key（顺序固定，前端直接按 key 取，不要再拼 SQL）：

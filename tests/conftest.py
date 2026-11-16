@@ -345,6 +345,41 @@ def _seed() -> None:
         # 定期报告榜单默认只看 is_active = 1 的行（线上有大量下线残留行）
         conn.execute("UPDATE dws_taptap_download_periodic_rank SET is_active = 1")
         conn.execute("UPDATE dws_taptap_ad_aggr_v6_periodic_rank SET is_active = 1")
+        # PC 在线榜：当前维度（dist_*，is_active=1）+ 旧维度（pc_played，is_active=0，仅历史周）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_periodic_rank (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                rank_category TEXT NOT NULL,
+                rank_no INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                app_name TEXT NULL,
+                icon TEXT NULL,
+                distribution_type INTEGER NULL,
+                list_type TEXT NULL,
+                tag_1 TEXT NULL,
+                tag_2 TEXT NULL,
+                avg_online_players REAL NULL,
+                prev_avg_online_players REAL NULL,
+                diff_online_players REAL NULL,
+                updated_at TEXT NULL,
+                is_active INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_periodic_rank "
+            "(period_type, crawled_at, rank_category, rank_no, app_id, app_name, "
+            " distribution_type, list_type, avg_online_players, is_active) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                # 旧维度只存在于历史周，且已被标记下线（必须仍能查到）
+                ("weekly", "2026-42", "top", 1, 111, "旧维度游戏", 0, "pc_played", 500.0, 0),
+                ("weekly", "2026-46", "top", 1, 222, "新维度游戏", 0, "dist_0", 900.0, 1),
+            ],
+        )
 
         # 定期报告：广告周报汇总行 + 分型行（W44~W46，W43 之前无数据）
         conn.executemany(
