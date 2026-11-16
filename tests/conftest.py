@@ -91,7 +91,10 @@ def _seed() -> None:
                 category_type TEXT NOT NULL,
                 category_value TEXT NOT NULL,
                 game_cnt INTEGER NULL,
-                download_total INTEGER NULL
+                download_total INTEGER NULL,
+                download_app INTEGER NULL,
+                download_pc INTEGER NULL,
+                updated_at TEXT NULL
             )
             """
         )
@@ -105,6 +108,39 @@ def _seed() -> None:
                 ("monthly", "2026-11", "dist", "2", 162, 1397506),
             ],
         )
+        # 定期报告：下载周报汇总行（category_type='all'）。W45 刻意留空下载量，
+        # 用来验证「缺值不显示 0、环比回退到最近有数据的期」。
+        conn.executemany(
+            "INSERT INTO dws_taptap_download_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, game_cnt, "
+            " download_total, download_app, download_pc, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-43", "all", "ALL", 644, 8132065, 7982020, 150045,
+                 "2026-10-31 23:07:18"),
+                ("weekly", "2026-44", "all", "ALL", 633, 8962027, 8832897, 129130,
+                 "2026-11-02 11:35:10"),
+                ("weekly", "2026-45", "all", "ALL", 977, 7459661, 7355143, 104518,
+                 "2026-11-12 19:07:02"),
+                ("weekly", "2026-46", "all", "ALL", 860, 10475431, 10340459, 134972,
+                 "2026-11-16 00:05:10"),
+            ],
+        )
+        # 定期报告：下载周报分型行（W45 / W46）
+        conn.executemany(
+            "INSERT INTO dws_taptap_download_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, game_cnt, "
+            " download_total, download_app, download_pc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-45", "dist", "0", 730, 5113959, 5011404, 102555),
+                ("weekly", "2026-45", "dist", "1", 245, 1112860, 1110897, 1963),
+                ("weekly", "2026-45", "dist", "2", 163, 1232842, 1232842, 0),
+                ("weekly", "2026-46", "dist", "0", 539, 7024506, 6889534, 134972),
+                ("weekly", "2026-46", "dist", "1", 151, 1803164, 1803164, 0),
+                ("weekly", "2026-46", "dist", "2", 175, 1647761, 1647761, 0),
+            ],
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_periodic_report (
@@ -114,7 +150,9 @@ def _seed() -> None:
                 category_type TEXT NOT NULL,
                 category_value TEXT NOT NULL,
                 game_cnt INTEGER NULL,
-                peak_online_players INTEGER NULL
+                peak_online_players INTEGER NULL,
+                avg_online_players REAL NULL,
+                updated_at TEXT NULL
             )
             """
         )
@@ -128,6 +166,25 @@ def _seed() -> None:
                 ("monthly", "2026-11", "dist", "2", 262, 16711),
             ],
         )
+        # 定期报告：PC 在线周报（实测只有 W45 起两期，用于验证 insufficientHistory）
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, game_cnt, "
+            " peak_online_players, avg_online_players, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-45", "all", "ALL", 581, 125697, 101768.88,
+                 "2026-11-12 19:08:28"),
+                ("weekly", "2026-46", "all", "ALL", 860, 146354, 83223.93,
+                 "2026-11-16 00:05:12"),
+                ("weekly", "2026-45", "dist", "0", 444, 113272, 89907.0, None),
+                ("weekly", "2026-45", "dist", "1", 68, 5973, 5465.38, None),
+                ("weekly", "2026-45", "dist", "2", 75, 6894, 6396.5, None),
+                ("weekly", "2026-46", "dist", "0", 539, 127110, 68139.58, None),
+                ("weekly", "2026-46", "dist", "1", 151, 8633, 6613.48, None),
+                ("weekly", "2026-46", "dist", "2", 177, 11186, 8470.87, None),
+            ],
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_ad_aggr_v6_periodic_report (
@@ -137,7 +194,10 @@ def _seed() -> None:
                 category_type TEXT NOT NULL,
                 category_value TEXT NOT NULL,
                 app_cnt INTEGER NULL,
-                total_views INTEGER NULL
+                total_views INTEGER NULL,
+                ad_views INTEGER NULL,
+                pcebid_views INTEGER NULL,
+                updated_at TEXT NULL
             )
             """
         )
@@ -241,6 +301,84 @@ def _seed() -> None:
                 _ad_rank("gain", 2, 826044, "斗罗大陆：传承", 0, "角色扮演", 262, 44, 218),
                 _ad_rank("loss", 1, 903352, "我叫MT：崛起", 0, "卡牌", 445, 1026, -581),
                 _ad_rank("loss", 2, 748031, "伊莫", 0, "动作", 316, 704, -388),
+            ],
+        )
+        # 定期报告榜单默认只看 is_active = 1 的行（线上有大量下线残留行）
+        conn.execute("UPDATE dws_taptap_download_periodic_rank SET is_active = 1")
+        conn.execute("UPDATE dws_taptap_ad_aggr_v6_periodic_rank SET is_active = 1")
+
+        # 定期报告：广告周报汇总行 + 分型行（W44~W46，W43 之前无数据）
+        conn.executemany(
+            "INSERT INTO dws_taptap_ad_aggr_v6_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, app_cnt, "
+            " total_views, ad_views, pcebid_views, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-44", "all", "ALL", 109, 4597, 4373, 224,
+                 "2026-11-16 11:35:09"),
+                ("weekly", "2026-45", "all", "ALL", 96, 5534, 5114, 420,
+                 "2026-11-16 11:35:09"),
+                ("weekly", "2026-46", "all", "ALL", 120, 5969, 5328, 641,
+                 "2026-11-16 11:35:09"),
+                ("weekly", "2026-45", "dist", "0", 92, 5180, None, None, None),
+                ("weekly", "2026-45", "dist", "1", 3, 320, None, None, None),
+                ("weekly", "2026-45", "dist", "2", 1, 34, None, None, None),
+                ("weekly", "2026-46", "dist", "0", 104, 5402, None, None, None),
+                ("weekly", "2026-46", "dist", "1", 2, 468, None, None, None),
+                ("weekly", "2026-46", "dist", "2", 0, 0, None, None, None),
+                ("weekly", "2026-46", "dist", "(未分类)", 14, 99, None, None, None),
+            ],
+        )
+
+        # 定期报告：概览周表（含一列已下线字段的值，验证接口不取）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_periodic_report_overview_weekly (
+                id INTEGER PRIMARY KEY,
+                week_key TEXT NOT NULL,
+                week_start TEXT NULL,
+                week_end TEXT NULL,
+                online_game_cnt INTEGER NULL,
+                online_peak_players INTEGER NULL,
+                online_peak_pc INTEGER NULL,
+                online_peak_pc_emulator INTEGER NULL,
+                online_peak_creative INTEGER NULL,
+                download_total INTEGER NULL,
+                download_pc INTEGER NULL,
+                download_app INTEGER NULL,
+                download_dist_type_0 INTEGER NULL,
+                download_dist_type_1 INTEGER NULL,
+                download_dist_type_2 INTEGER NULL,
+                ad_total INTEGER NULL,
+                ad_app INTEGER NULL,
+                ad_pc INTEGER NULL,
+                ad_kw INTEGER NULL,
+                torchlight_download_total INTEGER NULL,
+                torchlight_avg_online_players REAL NULL,
+                heartopia_download_total INTEGER NULL,
+                heartopia_avg_online_players REAL NULL,
+                online_peak_dist_0 INTEGER NULL,
+                online_peak_dist_1 INTEGER NULL,
+                online_peak_dist_2 INTEGER NULL,
+                updated_at TEXT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_periodic_report_overview_weekly "
+            "(week_key, week_start, week_end, online_game_cnt, online_peak_players, "
+            " torchlight_download_total, torchlight_avg_online_players, "
+            " heartopia_download_total, heartopia_avg_online_players, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                # W44 → W45 火炬之光下载放量 14 倍，用来验证异常放量告警
+                ("2026-44", "2026-10-26", "2026-11-01", None, None,
+                 86842, 11813.4, 228910, 8123.5, "2026-11-02 11:35:10"),
+                # W45 概览的在线列是旧快照（763 / 133480），线上实测与在线周期表不符
+                ("2026-45", "2026-11-02", "2026-11-08", 763, 133480,
+                 1224138, 12150.5, 233456, 8231.2, "2026-11-12 18:24:27"),
+                ("2026-46", "2026-11-09", "2026-11-15", 671, 146354,
+                 47319, 10402.1, 254189, 8102.7, "2026-11-16 09:55:05"),
             ],
         )
 

@@ -176,18 +176,68 @@ curl 'http://127.0.0.1:8000/api/v09/data/home/ad-rank?month=2026-11&limit=5'
 - `totals` 只累加这三类；`category_value` 不在 0/1/2 的行（如广告表的「未分类」）单独归集到 `unclassified`，不进占比分母
 - 三张月表缺表/缺数时返回 `code 40001` 与数据库原文，不会伪造数据
 
-### 3. 列出表 — `GET /api/v09/data/tables`
+### 3. 定期报告聚合 — `GET /api/v09/data/periodic/*`
+
+周报 / 月报页面（`everything-ui` 的 `PeriodicReport`）原本由前端拼 4~6 条 SQL、并在 `data.js` 里
+自己算「本期 / 上期 / 可用期数」。现在收敛成三个只读接口，一次请求拿到整篇报告：
+
+| 路径 | 说明 |
+|------|------|
+| `GET .../periodic/periods?period=weekly\|monthly` | 可选期列表：每期起止日期 + 三条业务线各自是否有数据 + 哪条线期数不足 |
+| `GET .../periodic/report?period=weekly&key=2026-46&window=12` | 一期完整载荷：6 个核心 KPI（含上期值、环比、sparkline 趋势点、可用期数）、三条业务线的分型拆解、按游戏指标、数据质量标记 |
+| `GET .../periodic/rank?line=download\|ad\|online&period=weekly&key=&category=top\|gain\|loss&limit=10` | 一期某业务线榜单；PC 在线榜需带 `list_type=dist_0/1/2`（W45 起），历史周才用 `pc_played` 等旧维度 |
+
+```bash
+curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-46'
+# {"code":0,"data":{
+#   "meta":{"periodKey":"2026-46","periodStart":"2026-11-09","periodEnd":"2026-11-15",
+#           "prevPeriodKey":"2026-45","isLatest":true,"isPartial":false,
+#           "availablePeriods":["2026-40","2026-41","2026-42","2026-43","2026-44","2026-45","2026-46"],
+#           "updatedAt":"2026-11-16T11:35:09+08:00","insufficientHistory":false},
+#   "coreKpis":[
+#     {"key":"download_total","label":"下载总量","unit":"次","value":10475431,
+#      "prevValue":7459661,"prevPeriodKey":"2026-45","deltaAbs":3015770,"deltaPct":40.4,
+#      "direction":"up","deltaComparable":true,
+#      "trend":[{"period":"2026-45","label":"W45","value":7459661}, ...],
+#      "availablePeriods":["2026-40", ..., "2026-46"],"historyPoints":7,
+#      "insufficientHistory":false,"hasValue":true}, ...],
+#   "lines":[{"key":"download","label":"TapTap 下载","kpis":[...],
+#             "breakdown":{"items":[{"key":"0","label":"商业游戏","value":7024506,
+#                                    "share":0.6706,"prevValue":5113959,"deltaPct":37.4}, ...],
+#                          "unclassified":[],"unclassifiedTotal":0,"total":10475431}}, ...],
+#   "players":[{"key":"torchlight","name":"火炬之光：无限","download":47319,
+#               "downloadDeltaPct":-96.1,"avgOnline":10402.1,"downloadTrend":[...]}, ...],
+#   "flags":[{"level":"high","item":"torchlight_download_jump","label":"火炬之光：无限下载量异常放量",
+#             "detail":"2026-44 86,842 → 2026-45 1,224,138（14.1×），疑似口径切换或活动冲量", ...}]}}
+```
+
+取数与缺值口径：
+
+- 汇总行取 `category_type='all'`，分型取 `category_type='dist'`；三条业务线分别来自
+  `dws_taptap_download_periodic_report`（只用 `download_*` 增量列）、
+  `dws_taptap_ad_aggr_v6_periodic_report`（`total_views = ad_views + pcebid_views`）、
+  `dws_taptap_pc_online_peak_players_periodic_report`；按游戏指标来自 `dws_periodic_report_overview_weekly`
+- **缺值不补 0**：某指标某期没有数据时 `value` 为 `null`、`hasValue` 为 `false`，环比取「该指标自己有数据的最近一期」，
+  上期为 0 或缺失时 `deltaPct` 为 `null`（不会再画出假的 -100%）
+- `availablePeriods` 给每个指标实际能画的期数，少于 3 期时 `insufficientHistory=true`；前端据此决定是否画趋势线
+- `isPartial=true` 表示这一期还没走完（月中 / 周中取数），此时 `deltaComparable=false`，环比只作参考
+- `flags` 由服务端算好，前端只负责渲染角标：概览表与在线周期表跨表不一致、按游戏单期放量（≥3×）、
+  `distribution_type` 未归类、已下线列（`online_peak_pc` 等）、历史期数不足
+- 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
+- 结果在进程内缓存 60 秒（`CACHE_TTL_SECONDS`），报告一天只更新几次，重复请求不再打库
+
+### 4. 列出表 — `GET /api/v09/data/tables`
 
 MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口查的表到底在不在」。
 
-### 4. 健康检查
+### 5. 健康检查
 
 | 路径 | 说明 |
 |------|------|
 | `GET /health` | 进程状态 + 数据库配置是否齐全，**不连库** |
 | `GET /health/db` | 真正执行 `SELECT 1`，连不上返回 503 |
 
-### 5. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`、`GET {API_STATS_PREFIX}/summary`
+### 6. 访问统计 — `POST {API_STATS_PREFIX}/hit`、`GET {API_STATS_PREFIX}/week`、`GET {API_STATS_PREFIX}/summary`
 
 给 `everything-ui` 的「本周 PV/UV」组件用，主前缀 `/api/v09/stats`（与 `/api/v09/data` 并列），
 并额外挂一份 `/api/stats` 别名 —— 前端默认就请求 `https://horgrix.com/api/stats`，nginx 按原路径转发即可。
@@ -255,7 +305,7 @@ python scripts/init_visit_event.py --check   # 只看表在不在
 python scripts/init_visit_event.py          # 建表
 ```
 
-### 5.1 v1 → v2 表结构（一次性，会清空历史）
+### 6.1 v1 → v2 表结构（一次性，会清空历史）
 
 v2 相比 v1 只多一列 `visitor_src`（`cid` / `fp`），并去掉写入时的 30 分钟去重，
 所以旧结构的表无法直接沿用。确认可以清空历史数据后：

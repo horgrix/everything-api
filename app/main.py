@@ -18,7 +18,7 @@ from .errors import (
     error_response,
     ok,
 )
-from .routers import data, home, stats
+from .routers import data, home, periodic, stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,6 +70,8 @@ app.add_middleware(CORSMiddleware, **build_cors_options(settings))
 app.include_router(data.router)
 # 首页概览：/api/v09/data/home（复用现有 nginx 的 /api/v09/data/ 反代）
 app.include_router(home.router)
+# 定期报告：/api/v09/data/periodic（同为 /api/v09/data/ 前缀，免改 nginx）
+app.include_router(periodic.router)
 app.include_router(stats.router, prefix=settings.api_stats_prefix)
 if settings.api_stats_prefix != "/api/stats":
     # 前端默认请求 /api/stats（与 /api/v09/data 并列），再挂一份别名，
