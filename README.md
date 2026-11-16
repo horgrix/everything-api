@@ -318,10 +318,15 @@ W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻
 上游对低体量游戏返回哨兵值 100（不是我们填的默认值），所以「多少款含水」和「多少人含水」
 是两个数，可以差 3 倍（W46 商业游戏：行数 42.95% vs 人数 14.87%）。
 
-| 字段 | 分母 | 回答的问题 | 出现位置 |
-|------|------|-----------|----------|
-| `placeholderRatio` | **app-小时行数** | 这个分组里多少款游戏这一小时没拿到真值（数据质量） | `peakHour.breakdown[]`、`peakHour`、`lines[online].breakdown.items[]` |
-| `placeholderPlayerRatio` | **在线人数** | 这个分型的在线人数里哨兵值贡献了多少（「8,526 人里 86.8% 是兜底」用它） | 只在 `peakHour.breakdown[]` 与 `peakHour` |
+| 字段 | 分母 | 统计窗口 | 回答的问题 |
+|------|------|----------|-----------|
+| `peakHour.placeholderRatio` / `peakHour.breakdown[].placeholderRatio` | app-小时行数 | **峰值那一小时** | 这一小时里多少款游戏没拿到真值 |
+| `lines[online].breakdown.items[].placeholderRatio` | app-小时行数 | **整个周期** | 这一周里该分型多少比例的采集行为哨兵值 |
+| `peakHour.placeholderPlayerRatio` / `peakHour.breakdown[].placeholderPlayerRatio` | 在线人数 | **峰值那一小时** | 这一小时的在线人数里哨兵值贡献了多少 |
+
+注意前两行的**分母口径相同但窗口不同**（W46 实测 0.43 vs 0.34），不是数据打架，
+也不要去对账。字段名与 DWS 表列 `placeholder_ratio` 保持一致，名字里的「ratio」不自带单位，
+所以「这是款数口径」只在本文档定义一次。
 
 - 两者都是 0~1、保留 4 位小数；表里没有该列的线（下载/广告）为 `null`。
 - `placeholderPlayerRatio` 由 `round(placeholderRatio × gameCnt) × 100 / peakOnlinePlayers` 推导
