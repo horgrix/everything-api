@@ -94,8 +94,9 @@ SUSPECT_JUMP_RATIO = 3.0
 # 概览表与在线周期表的容差（相对差）
 OVERVIEW_TOLERANCE = 0.01
 
-# 在线数据从这一天开始采集；更早的期（如 W45、2026-11）覆盖不全，环比不可比
-ONLINE_COVERAGE_START = "2026-11-07"
+# 在线周期表的数据从这一天开始有（明细覆盖 11-08 08:00 起；11-07 只有 v2 无明细，
+# 不进周期表）；起点更早的期（W45、2026-11）覆盖不全，环比不可比
+ONLINE_COVERAGE_START = "2026-11-08"
 # 进程内结果缓存秒数：报告一天只更新几次，60 秒内的重复请求不必再打库
 CACHE_TTL_SECONDS = 60
 
@@ -872,6 +873,7 @@ def _build_flags(
     overview: dict[str, dict[str, Any]],
     breakdowns: dict[str, dict[str, Any]],
     line_kpis: dict[str, list[dict[str, Any]]],
+    coverage_notes: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """数据质量标记：前端拿来加角标 / 提示，不用自己算。"""
     flags: list[dict[str, Any]] = []
@@ -907,15 +909,21 @@ def _build_flags(
                 }
             )
             continue
+        coverage = (coverage_notes or {}).get("online")
+        detail = (
+            f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}（{period_key}）"
+        )
+        if coverage:
+            # 半期（如 W45）里概览会取到「没有明细覆盖」的那几个小时，属覆盖差不是数据错误
+            detail += f"；{coverage}，概览取到了无明细覆盖的小时，属覆盖差"
+        else:
+            detail += "；两表统计池不同，不是同一份数据的旧快照"
         flags.append(
             {
                 "level": "medium",
                 "item": f"{column}_mismatch",
                 "label": f"{label}跨表口径差异",
-                "detail": (
-                    f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}"
-                    f"（{period_key}）；两表统计池不同，不是同一份数据的旧快照"
-                ),
+                "detail": detail,
                 "action": (
                     "已定口径：在线类指标一律用在线周期表（本接口返回值），"
                     "概览表仅用于「按游戏」指标"
@@ -1138,6 +1146,7 @@ def report(
     line_payloads = []
     line_kpis: dict[str, list[dict[str, Any]]] = {}
     coverage_flags: list[dict[str, Any]] = []
+    coverage_notes: dict[str, str] = {}
     for source in LINE_SOURCES:
         series = lines[source.key]
         current_partial, current_note = _coverage(period, period_key, source.coverage_start)
@@ -1167,6 +1176,9 @@ def report(
         if source.key == "online" and overview:
             kpis.append(_build_concurrent_kpi(overview, period_key, all_periods, window))
         line_kpis[source.key] = kpis
+        note = current_note or prev_note
+        if note:
+            coverage_notes[source.key] = note
         if current_partial or prev_partial:
             coverage_flags.append(
                 {
@@ -1235,7 +1247,9 @@ def report(
         "lines": line_payloads,
         "players": _build_players(overview, period_key, window),
         # 数据质量标记（缺值、跨表不一致、未归类、异常放量）
-        "flags": _build_flags(period_key, lines, overview, breakdowns, line_kpis),
+        "flags": _build_flags(
+            period_key, lines, overview, breakdowns, line_kpis, coverage_notes
+        ),
     }
     payload["meta"]["sources"] = [item for item in payload["meta"]["sources"] if item]
     payload["flags"].extend(coverage_flags)
