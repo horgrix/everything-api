@@ -226,6 +226,14 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
 - 结果在进程内缓存 60 秒（`CACHE_TTL_SECONDS`），报告一天只更新几次，重复请求不再打库
 
+部署后一条命令验收（只读，失败时非 0 退出，可当发布门禁）：
+
+```bash
+# 默认打 http://127.0.0.1:8000（与本文档其他地方一致；服务改端口时用 --base 覆盖）
+python scripts/smoke_periodic.py
+python scripts/smoke_periodic.py --base http://10.0.0.5:8000 --period monthly
+```
+
 ### 4. 列出表 — `GET /api/v09/data/tables`
 
 MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口查的表到底在不在」。

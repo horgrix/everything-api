@@ -1,6 +1,7 @@
 """定期报告接口冒烟：部署后一条命令确认三个接口可用、口径字段齐全。
 
-用法（本机或服务器上跑，默认打本机 8012 端口的 everything-api）：
+用法（本机或服务器上跑，默认打本机 8000 端口的 everything-api；
+契约文档里 uvicorn 的监听端口就是 8000，两者保持一致）：
 
     python scripts/smoke_periodic.py
     python scripts/smoke_periodic.py --base http://127.0.0.1:8000
@@ -19,7 +20,7 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_BASE = "http://127.0.0.1:8012"
+DEFAULT_BASE = "http://127.0.0.1:8000"
 
 
 class SmokeError(RuntimeError):
