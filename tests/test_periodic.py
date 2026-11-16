@@ -237,6 +237,7 @@ def test_online_metric_decisions(client):
     assert coverage["scope"] == "previous"
     assert coverage["relatedPeriod"] == "2026-45"
     assert coverage["level"] == "info"
+    assert "上期" in coverage["label"]   # label 必须指向它讲的那一期
     # W45 采集窗口只有 11-08 一天 = 12 点，实采 8 → 8/12 = 67%，窗口内确有缺失
     assert "8/12" in coverage["detail"]
     assert "8/84" in coverage["detail"]          # 期口径同时给出，供参考
@@ -254,6 +255,7 @@ def test_online_metric_decisions(client):
     own = next(f for f in older["flags"] if f["item"] == "online_partial_coverage")
     assert own["level"] == "info" and own["scope"] == "current"
     assert own["relatedPeriod"] == "2026-45"
+    assert "本期" in own["label"]        # W45 讲的是自己，不能写成「上期」
     assert "2026-11-08" in source["detail"]
     assert older_online["coverage"]["sourceStartsLate"] is True
     assert older_kpis["online_game_cnt"]["value"] == 581
