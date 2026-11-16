@@ -441,6 +441,12 @@ def _seed() -> None:
                 ("weekly", "2026-46", "loss", 2, 999, "薄样本乙", 2, "dist_2", 280.0, 1, 8),
             ],
         )
+        # 在线榜 icon：DWS 2026-11-16 从 details_hourly 回填，接口不再用 NULL 占位
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_rank "
+            "SET icon = 'https://img-tc.tapimg.com/online-222.jpg' "
+            "WHERE crawled_at = '2026-46' AND rank_no = 1 AND is_active = 1"
+        )
 
         # 定期报告：广告周报汇总行 + 分型行（W44~W46，W43 之前无数据）
         conn.executemany(
@@ -503,6 +509,10 @@ def _seed() -> None:
                 torchlight_avg_online_players REAL NULL,
                 heartopia_download_total INTEGER NULL,
                 heartopia_avg_online_players REAL NULL,
+                torchlight_app_id INTEGER NULL,
+                torchlight_icon TEXT NULL,
+                heartopia_app_id INTEGER NULL,
+                heartopia_icon TEXT NULL,
                 online_peak_dist_0 INTEGER NULL,
                 online_peak_dist_1 INTEGER NULL,
                 online_peak_dist_2 INTEGER NULL,
@@ -528,6 +538,15 @@ def _seed() -> None:
                 ("2026-46", "2026-11-09", "2026-11-15", 671, "2026-11-15 22", 146354,
                  47319, 10402.1, 254189, 8102.7, "2026-11-16 09:55:05"),
             ],
+        )
+        # 重点游戏真图与 app_id（后加列）：W46 有值，更早的期留 NULL
+        conn.execute(
+            "UPDATE dws_periodic_report_overview_weekly SET "
+            "torchlight_app_id = 172664, "
+            "torchlight_icon = 'https://img-tc.tapimg.com/torchlight.jpg', "
+            "heartopia_app_id = 45213, "
+            "heartopia_icon = 'https://img-tc.tapimg.com/heartopia.jpg' "
+            "WHERE week_key = '2026-46'"
         )
 
         # 访问统计表（MySQL 侧见 sql/visit_event.sql，这里放 SQLite 等价结构）

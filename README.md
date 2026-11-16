@@ -205,7 +205,9 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 #             "breakdown":{"items":[{"key":"0","label":"商业游戏","value":7024506,
 #                                    "share":0.6706,"prevValue":5113959,"deltaPct":37.4}, ...],
 #                          "unclassified":[],"unclassifiedTotal":0,"total":10475431}}, ...],
-#   "players":[{"key":"torchlight","name":"火炬之光：无限","download":47319,
+#   "players":[{"key":"torchlight","name":"火炬之光：无限","appId":172664,
+#               "icon":"https://img-tc.tapimg.com/.../_tap_appicon_s.jpg",
+#               "download":47319,
 #               "downloadDeltaPct":-96.1,"avgOnline":10402.1,"downloadTrend":[...]}, ...],
 #   "flags":[{"level":"high","item":"torchlight_download_jump","label":"火炬之光：无限下载量异常放量",
 #             "detail":"2026-44 86,842 → 2026-45 1,224,138（14.1×），疑似口径切换或活动冲量", ...}]}}
@@ -229,6 +231,12 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   `is_active` 是 `tinyint NOT NULL DEFAULT 1`，代码里用 `COALESCE(is_active,1)` 属防御性写法：
   DWS 下线残留行是「置 0 不删数据」，例如广告的 `(未分类)` 行，不过滤就会多出一个桶
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
+- **三张榜的 icon 都读自己表的 `icon` 列**（2026-11-16 起，在线榜由 DWS 从
+  `dws_taptap_pc_online_peak_players_details_hourly` 回填，`is_active=1` 262/262 行非空）。
+  列不存在时降级为 `NULL` 并发 warning，不会让整个榜单 400；值归一：`null` / `""` / `"NULL"`
+  一律输出 `null`。下载榜仍有 82 行（W41~W44 已下线/从未采到）无 icon，前端保留首字兜底。
+- **重点游戏带真图**：`players[].icon` / `players[].appId`，来自概览表
+  `torchlight_icon` / `torchlight_app_id` / `heartopia_*`（后加列，列不存在或该期无值时为 `null`）。
 - **在线榜的样本信号**：每行带 `realHours`（该游戏本周期有有效在线的小时数，下载/广告榜为 `null`），
   payload 带 `sample: {minRealHours, maxRealHours, medianRealHours, lowSample}`。
   判定为 **`medianRealHours < 8`（严格小于）**，量的是「榜内单条数据够不够厚」：

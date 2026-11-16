@@ -249,7 +249,8 @@ class RankSource:
     prev: str
     diff: str
     unit: str
-    # 在线榜没有 icon 列，用 NULL 占位，保持三张榜返回结构一致
+    # 榜单图标列：三张榜都有（在线榜的 icon 由 DWS 2026-11-16 从 details_hourly 回填，
+    # 262/262 行非空）。个别老 app 仍可能为空，前端保留首字兜底。
     icon: str = "icon"
 
 
@@ -265,12 +266,21 @@ RANK_SOURCES: dict[str, RankSource] = {
     "online": RankSource(
         "online", "TapTap PC 在线", ONLINE_RANK_TABLE,
         "avg_online_players", "prev_avg_online_players", "diff_online_players", "人",
-        icon="NULL",
     ),
 }
 
 
 # ---------------------------------------------------------------- 基础工具
+
+
+def _as_text(value: Any) -> str | None:
+    """文本列收敛：None / 空串 / 字符串 "NULL" 一律视为缺值（老视图会用 NULL 字面量占位）。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.upper() == "NULL":
+        return None
+    return text
 
 
 def _as_number(value: Any) -> float | int | None:
@@ -665,9 +675,17 @@ def _load_overview() -> dict[str, dict[str, Any]]:
 
     # online_game_cnt_at 是 DWS 后加的列（MAX(game_cnt) 那条快照的时间），老概览表没有
     argmax_column = _overview_argmax_select(_columns_of(OVERVIEW_TABLE))
+    # 重点游戏的 app_id / icon 同样是后加的列（2026-11-16）；列在才拼，老库不炸
+    overview_columns = _columns_of(OVERVIEW_TABLE)
+    player_columns = "".join(
+        f", {key}_{suffix}"
+        for key, *_ in PLAYER_COLUMNS
+        for suffix in ("app_id", "icon")
+        if f"{key}_{suffix}" in overview_columns
+    )
     sql = f"""
         SELECT week_key, week_start, week_end,
-               online_game_cnt, online_peak_players{argmax_column},
+               online_game_cnt, online_peak_players{argmax_column}{player_columns},
                torchlight_download_total, torchlight_avg_online_players,
                heartopia_download_total, heartopia_avg_online_players,
                updated_at
@@ -1178,6 +1196,9 @@ def _build_players(
             {
                 "key": key,
                 "name": name,
+                # 角标用真图（老概览表没这两列时为空，前端自行首字兜底）
+                "appId": _as_int(current.get(f"{key}_app_id")),
+                "icon": _as_text(current.get(f"{key}_icon")),
                 "download": download,
                 "downloadPrev": download_prev,
                 "downloadDeltaPct": _ratio(download, download_prev),
@@ -1730,8 +1751,15 @@ def rank(
         hours_column = (
             "real_hours" if "real_hours" in _columns_of(source.table) else "NULL"
         )
+        # icon 列同理按存在性处理：老库的在线榜没有 icon（以前用 NULL 字面量占位），
+        # 直接写列名会让整个榜单 400；缺列时降级成 NULL 并留一条 WARNING
+        if source.icon in _columns_of(source.table):
+            icon_column = source.icon
+        else:
+            _warn_missing_column(source.table, source.icon, "榜单图标会整列为 null（前端走首字兜底）")
+            icon_column = "NULL"
         sql = f"""
-            SELECT rank_no, app_id, app_name, {source.icon} AS icon, distribution_type,
+            SELECT rank_no, app_id, app_name, {icon_column} AS icon, distribution_type,
                    tag_1, tag_2, {source.value} AS value,
                    {source.prev} AS prev_value, {source.diff} AS diff_value,
                    {hours_column} AS real_hours, updated_at

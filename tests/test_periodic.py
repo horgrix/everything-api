@@ -676,3 +676,35 @@ def test_missing_column_logs_one_warning(caplog):
     warned = [r for r in caplog.records if "online_game_cnt_hour" in r.getMessage()]
     assert len(warned) == 1
     assert warned[0].levelno == logging.WARNING
+
+
+def test_rank_icons_come_from_tables(client):
+    """三张榜都从自己的表取 icon；在线榜不再用 NULL 占位（DWS 2026-11-16 已回填）。"""
+    body = client.get(f"{PREFIX}/rank", params={"line": "online", "period": "weekly",
+                                               "key": "2026-46", "rank_category": "top"}).json()
+    rows = body["data"]["items"]
+    top = next(row for row in rows if row["rankNo"] == 1)
+    assert top["icon"] == "https://img-tc.tapimg.com/online-222.jpg"
+
+    # 榜单里的空 icon 归一成 None（不是字符串 "NULL"），前端才好判空走首字兜底
+    from app.routers.periodic import _as_text
+
+    assert _as_text("NULL") is None
+    assert _as_text("  ") is None
+    assert _as_text(None) is None
+
+
+def test_players_expose_icon_and_app_id(client):
+    payload = _report(client)["data"]
+    players = {item["key"]: item for item in payload["players"]}
+
+    torchlight = players["torchlight"]
+    assert torchlight["icon"] == "https://img-tc.tapimg.com/torchlight.jpg"
+    assert torchlight["appId"] == 172664
+    assert players["heartopia"]["icon"] == "https://img-tc.tapimg.com/heartopia.jpg"
+    assert players["heartopia"]["appId"] == 45213
+
+    # 更早的期这两列是 NULL：字段在但值为 null，前端走首字兜底
+    older = {item["key"]: item for item in _report(client, key="2026-45")["data"]["players"]}
+    assert older["torchlight"]["icon"] is None
+    assert older["torchlight"]["appId"] is None
