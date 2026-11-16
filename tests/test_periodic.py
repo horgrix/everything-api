@@ -277,9 +277,9 @@ def test_peak_hour_reads_dist_peak_and_breakdown_marks_summable(client):
     assert older_peak["crawledAt"] == "2026-11-08 20"
     assert older_peak["sumPeakOnlinePlayers"] == 125697
     assert older_peak["sumsMatch"] is True
-    # W45 没有 ALL 行、且没有 placeholder_player_ratio 列值：
-    # 人数口径回退到「按分型贡献求和 / 总人数」= (177+38+49)*100/125,697 = 0.2100
-    assert older_peak["placeholderPlayerRatio"] == pytest.approx(0.21, abs=5e-3)
+    # W45 没有 ALL 行、也没有 placeholder_player_ratio 列值（模拟老库）：
+    # 人数口径回退到推导 —— 183+50+60 = 293 条兜底 × 100 / 125,697 = 0.2331
+    assert older_peak["placeholderPlayerRatio"] == pytest.approx(0.2331, abs=5e-4)
 
 
 def test_concurrent_kpi_explains_overview_lag():

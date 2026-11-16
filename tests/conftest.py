@@ -223,7 +223,7 @@ def _seed() -> None:
                 (ratio, player_ratio, value),
             )
         # W45 没有 ALL 行（模拟新周期首日还没重算），只有分型行带占位占比
-        for value, ratio in (("0", 0.4), ("1", 0.6), ("2", 0.7)):
+        for value, ratio in (("0", 0.4131), ("1", 0.7937), ("2", 0.8571)):
             conn.execute(
                 "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
                 "SET placeholder_ratio = ? "
