@@ -239,6 +239,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 | `download_app` | APP 下载量 | 次 | download |
 | `ad_total` | 广告曝光（`ad_views + pcebid_views`，**采集位次**） | 次 | ad |
 
+**改名历史（兼容性）**：`online_peak` 已在 `ed3886c` 改名为 `online_peak_players`，
+对齐 `report-metric-spec.json`；接口**不再返回旧名**，仍按 `online_peak` 取值会拿到 `undefined`。
+其余 key 从未变过。若以后还有改名，会在本条下面按「旧名 → 新名 @ commit」追加，不做双写别名（双字段迟旱漂成两个值）。
+
 每个 KPI 对象字段：`value` / `prevValue` / `prevPeriodKey` / `deltaAbs` / `deltaPct` /
 `direction` / `deltaComparable` / `trend[]` / `availablePeriods` / `historyPoints` /
 `insufficientHistory` / `hasValue` / `unit` / `isInt`；需要解释口径的指标额外带 `note`（目前只有广告三项：每游戏每小时在每个广告坑位出现计 1 次，**不是用户级曝光量**）。
