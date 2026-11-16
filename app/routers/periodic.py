@@ -63,9 +63,6 @@ ONLINE_TABLE = "dws_taptap_pc_online_peak_players_periodic_report"
 DOWNLOAD_RANK_TABLE = "dws_taptap_download_periodic_rank"
 AD_RANK_TABLE = "dws_taptap_ad_aggr_v6_periodic_rank"
 ONLINE_RANK_TABLE = "dws_taptap_pc_online_peak_players_periodic_rank"
-# 在线明细（小时级）与 v2 汇总：用来取「全局峰值那一小时」的同小时分型快照
-ONLINE_DETAILS_TABLE = "dws_taptap_pc_online_peak_players_details_hourly"
-ONLINE_V2_TABLE = "dws_taptap_pc_online_peak_players_v2_hourly"
 
 # distribution_type → 业务名称（前端不再自己维护一份）
 DIST_LABELS = {"0": "商业游戏", "1": "独立小游戏", "2": "Maker 小游戏"}
@@ -645,23 +642,17 @@ def _build_concurrent_kpi(
 
 
 def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
-    """全局峰值那一小时的同小时分型快照（DWS 的 category_type='dist_peak'）。
+    """全局峰值那一小时的同小时分型快照，直接读周期表的 category_type='dist_peak'。
 
-    分型拆解（category_type='dist'）是「每个分型各自周内峰值」，三者峰值出现在
-    不同小时，结构上就加不到一起。dist_peak 是同一个小时的快照：
-    Σpeak_online_players 恒等于该期 all 行的 peak_online_players，可以放心堆叠 / 算占比。
+    为什么不再自己拼明细表：
+      1. details_hourly 是原始层、有清理策略（11-07 那段就被清过），报表层读它迟早踩坑；
+      2. 历史期只有表里才有正确峰值小时——W45 的 11-07 22 点明细已清，
+         自算会整块缺省，而 dist_peak 给的是 11-08 20（576 款 / 125,697 人）；
+      3. 口径只在一处维护：DWS 每天与 dist/all 同批重算，接口不参与计算。
 
-    降级顺序：dist_peak（权威）→ 明细表 + v2 汇总现算（老库兼容）→ None。
-    任何一步失败都不影响整篇报告。
+    表里有 `category_value='ALL'` 行时以它为准（分母就是 653，不是整周去重的 860）；
+    没有该行时退回「三项求和 + all 行峰值校验」。取不到整个字段缺省，不影响整篇报告。
     """
-    snapshot = _load_peak_hour_from_periodic(period_type, period_key)
-    if snapshot is not None:
-        return snapshot
-    return _load_peak_hour_from_details(period_type, period_key)
-
-
-def _load_peak_hour_from_periodic(period_type: str, period_key: str) -> dict[str, Any] | None:
-    """首选：直接读周期表里的 dist_peak 行（DWS 每天重算，口径稳定）。"""
     table = ONLINE_TABLE
     sql = f"""
         SELECT category_value AS dist, game_cnt, peak_online_players,
@@ -673,85 +664,21 @@ def _load_peak_hour_from_periodic(period_type: str, period_key: str) -> dict[str
     """
     try:
         rows = _query(sql)
-    except SqlExecutionError as exc:  # 老库还没加 peak_hour 列 / 还没回填
-        logger.info("dist_peak 快照不可用，回退明细现算：%s", exc)
+    except SqlExecutionError as exc:
+        # 老库没有 peak_hour 列 / 还没回填：字段缺省比整篇 400 好
+        logger.info("dist_peak 快照不可用：%s", exc)
         return None
     if not rows:
         return None
 
-    # all 行给出该期总量，用它的在线峰值校验「三项可加」
-    all_peak = None
-    try:
-        all_rows = _query(
-            f"""
-            SELECT peak_online_players
-              FROM {table}
-             WHERE period_type = '{period_type}' AND crawled_at = '{period_key}'
-               AND category_type = 'all'{_active_filter(table)}
-             LIMIT 1
-            """
-        )
-        if all_rows:
-            all_peak = _as_int(all_rows[0].get("peak_online_players"))
-    except SqlExecutionError:
-        all_peak = None
-
-    return _assemble_peak_hour(
-        rows,
-        hour=str(rows[0].get("peak_hour") or ""),
-        total_players=all_peak,
-        total_games=None,
+    total_row = next(
+        (row for row in rows if str(row.get("dist") or "").strip().upper() == "ALL"), None
     )
-
-
-def _load_peak_hour_from_details(period_type: str, period_key: str) -> dict[str, Any] | None:
-    """兼容路径：老库没有 dist_peak 时，用明细表 + v2 汇总现算同一小时的快照。"""
-    start, end = _period_range(period_type, period_key)
-    sql = f"""
-        SELECT d.distribution_type AS dist,
-               COUNT(*) AS game_cnt,
-               SUM(d.online_players) AS peak_online_players,
-               MAX(d.crawled_at) AS crawled_at,
-               MAX(k.total_players) AS total_players,
-               MAX(k.total_games) AS total_games
-          FROM {ONLINE_DETAILS_TABLE} d
-          JOIN (
-                SELECT p.crawled_at AS crawled_at,
-                       p.online_players AS total_players,
-                       p.game_cnt AS total_games
-                  FROM {ONLINE_V2_TABLE} p
-                 WHERE p.crawled_at >= '{start}' AND p.crawled_at <= '{end} 23:59'
-                 ORDER BY p.online_players DESC
-                 LIMIT 1
-               ) k ON k.crawled_at = d.crawled_at
-         WHERE d.crawled_at = k.crawled_at
-         GROUP BY d.distribution_type
-    """
-    try:
-        rows = _query(sql)
-    except SqlExecutionError as exc:  # 表缺失 / 当天明细被清：降级，不让整篇报告挂掉
-        logger.info("峰值小时快照不可用：%s", exc)
-        return None
-    if not rows:
-        return None
-    return _assemble_peak_hour(
-        rows,
-        hour=str(rows[0].get("crawled_at") or ""),
-        total_players=_as_int(rows[0].get("total_players")),
-        total_games=_as_int(rows[0].get("total_games")),
-    )
-
-
-def _assemble_peak_hour(
-    rows: list[dict[str, Any]],
-    hour: str,
-    total_players: int | None,
-    total_games: int | None,
-) -> dict[str, Any]:
-    """把 dist_peak / 明细现算两种来源整理成同一份响应结构。"""
     breakdown = []
     for row in rows:
         dist = str(row.get("dist"))
+        if dist.strip().upper() == "ALL":
+            continue
         breakdown.append(
             {
                 "distributionType": dist,
@@ -769,17 +696,39 @@ def _assemble_peak_hour(
     )
     sum_games = sum(item["gameCnt"] or 0 for item in breakdown)
     sum_players = sum(item["peakOnlinePlayers"] or 0 for item in breakdown)
-    players_match = total_players is None or sum_players == total_players
-    # 款数是「该小时按分型去重的款数」，与整周去重的 game_cnt 本来就不同，不参与比对
-    games_match = total_games is None or sum_games == total_games
+
+    if total_row is not None:
+        game_cnt = _as_int(total_row.get("game_cnt"))
+        peak_players = _as_int(total_row.get("peak_online_players"))
+        sums_match = sum_games == game_cnt and sum_players == peak_players
+    else:
+        # 没有 ALL 行：以 period_type/crawled_at 的 all 行峰值作为应等于的目标
+        game_cnt, peak_players = sum_games, sum_players
+        all_peak = None
+        try:
+            all_rows = _query(
+                f"""
+                SELECT peak_online_players
+                  FROM {table}
+                 WHERE period_type = '{period_type}' AND crawled_at = '{period_key}'
+                   AND category_type = 'all'{_active_filter(table)}
+                 LIMIT 1
+                """
+            )
+            if all_rows:
+                all_peak = _as_int(all_rows[0].get("peak_online_players"))
+        except SqlExecutionError:
+            all_peak = None
+        sums_match = all_peak is None or sum_players == all_peak
+
     return {
-        "crawledAt": hour,
-        "gameCnt": total_games if total_games is not None else sum_games,
-        "peakOnlinePlayers": total_players if total_players is not None else sum_players,
+        "crawledAt": str(rows[0].get("peak_hour") or ""),
+        "gameCnt": game_cnt,
+        "peakOnlinePlayers": peak_players,
         "sumGameCnt": sum_games,
         "sumPeakOnlinePlayers": sum_players,
-        # 同小时快照的三项必须能加到该期总峰值：不平就是口径被动过了，前端标红
-        "sumsMatch": players_match and games_match,
+        # 表内自洽校验：Σ三项 必须等于 ALL 行（或 all 行峰值），不平就是 DWS 写坏了
+        "sumsMatch": sums_match,
         "breakdown": breakdown,
     }
 
