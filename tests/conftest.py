@@ -156,7 +156,8 @@ def _seed() -> None:
                 sample_hours INTEGER NULL,
                 peak_hour TEXT NULL,
                 placeholder_ratio REAL NULL,
-                placeholder_player_ratio REAL NULL
+                placeholder_player_ratio REAL NULL,
+                placeholder_players INTEGER NULL
             )
             """
         )
@@ -242,18 +243,19 @@ def _seed() -> None:
                 (ratio, value),
             )
         # dist_peak 用 W46 真库的三个值：行数口径 0.4295 / 0.7872 / 0.7143，ALL 0.5329
-        for value, ratio, player_ratio in (
-            ("0", 0.4295, 0.1487),
-            ("1", 0.7872, 0.8679),
-            ("2", 0.7143, 0.7931),
-            ("ALL", 0.5329, 0.2378),
+        for value, ratio, player_ratio, players in (
+            ("0", 0.4295, 0.1487, 18900),
+            ("1", 0.7872, 0.8679, 7400),
+            ("2", 0.7143, 0.7931, 8500),
+            ("ALL", 0.5329, 0.2378, 34800),
         ):
             conn.execute(
                 "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
-                "SET placeholder_ratio = ?, placeholder_player_ratio = ? "
+                "SET placeholder_ratio = ?, placeholder_player_ratio = ?, "
+                "    placeholder_players = ? "
                 "WHERE category_type = 'dist_peak' AND crawled_at = '2026-46' "
                 "AND category_value = ?",
-                (ratio, player_ratio, value),
+                (ratio, player_ratio, players, value),
             )
         conn.execute(
             """

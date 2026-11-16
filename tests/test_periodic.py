@@ -233,6 +233,8 @@ def test_online_metric_decisions(client):
     coverage = next(f for f in payload["flags"] if f["item"] == "online_partial_coverage")
     assert "8/84" in coverage["detail"]
     assert "84/84" not in coverage["detail"]
+    # W45 起点早于在线数据起点：属于「没有源数据」，不是采集故障
+    assert coverage["reason"] == "source_start"
 
     # W45 自身也是半周：现场置 null，而不是拿更早的期硬凑一个环比
     older = _report(client, key="2026-45")["data"]
@@ -334,6 +336,12 @@ def test_placeholder_ratio_exposed_for_online_breakdown(client):
     )
     # 整体取 ALL 行：人数口径 23.78%（行数口径 53.29%）
     assert peak["placeholderPlayerRatio"] == pytest.approx(0.2378, abs=1e-3)
+    # 整数口径：兜底贡献 34,800 人，扣除后余 111,554（不用 round，不会 ±1）
+    assert peak["placeholderPlayers"] == 34800
+    dist1_peak = peak["breakdown"][1]
+    assert dist1_peak["placeholderPlayers"] == 7400
+    # 该分型余量 = 8,526 − 7,400 = 1,126（整数，不用 round）
+    assert dist1_peak["peakOnlinePlayers"] - dist1_peak["placeholderPlayers"] == 1126
 
     download = next(line for line in payload["lines"] if line["key"] == "download")
     assert download["breakdown"]["items"][0]["placeholderRatio"] is None

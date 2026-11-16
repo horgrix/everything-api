@@ -394,40 +394,55 @@ def _coverage(
     key: str,
     coverage_start: str | None,
     sample_hours: int | None = None,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, str | None]:
     """某一期的数据覆盖是否完整，返回 (是否覆盖不全, 人话说明)。
 
     优先用表里实测的 `sample_hours`（该期 distinct 采样点数）算覆盖率：
     采集每 2 小时一次，满周 84 个点，覆盖率 < 0.9 判不全。这样「某周采集停几天」
     也会自动落到不全，不依赖写死的起始日。
     表里没有该列时（老库）退回「起始采集日」判断，只用于历史期。
+
+    返回 (是否覆盖不全, 说明, 原因)。原因是两种情况，处理方式不同：
+      · source_start —— 该期起点早于在线数据起点，那几天**没有源数据**，补不回来
+        （2026-11 的 11-01~11-07、W45 的 11-02~11-07）；
+      · collection_gap —— 期内在源数据可用范围内却采少了，属于可修的采集缺失。
     """
+    start, _end = _period_range(period_type, key)
+    reason = (
+        "source_start"
+        if coverage_start and start < coverage_start
+        else "collection_gap"
+    )
+
     if sample_hours is not None:
         expected = _expected_samples(period_type, key)
         if expected <= 0:
-            return False, None
+            return False, None, None
         ratio = sample_hours / expected
         if ratio >= COVERAGE_MIN_RATIO:
-            return False, None
-        return True, (
+            return False, None, None
+        note = (
             f"{key} 只采集到 {sample_hours}/{expected} 个采样点"
-            f"（约 {ratio * 100:.0f}%，采集节奏 2 小时/次），覆盖不全"
+            f"（约 {ratio * 100:.0f}%，采集节奏 2 小时/次）"
         )
+        if reason == "source_start":
+            note += f"；在线数据自 {coverage_start} 起才有，本期更早的日期本就无源数据"
+        return True, f"{note}，覆盖不全", reason
+
     if not coverage_start:
-        return False, None
-    start, end = _period_range(period_type, key)
+        return False, None, None
     if start >= coverage_start:
-        return False, None
+        return False, None, None
     covered_from = max(start, coverage_start)
-    covered_days = (date.fromisoformat(end) - date.fromisoformat(covered_from)).days + 1
+    covered_days = (date.fromisoformat(_end) - date.fromisoformat(covered_from)).days + 1
     expected = _expected_samples(period_type, key)
     covered_points = covered_days * SAMPLES_PER_DAY
     if covered_days >= (expected // SAMPLES_PER_DAY):
-        return False, None
+        return False, None, None
     return True, (
         f"在线数据自 {coverage_start} 起才开始采集，{key} 最多只有 {covered_days} 天窗口"
         f"（≤ {covered_points}/{expected} 个采样点，采集节奏 2 小时/次），覆盖不全"
-    )
+    ), "source_start"
 
 
 def _cache_get(cache_key: tuple) -> Any | None:
@@ -551,10 +566,14 @@ def _load_breakdown(
     player_ratio = (
         "placeholder_player_ratio" if "placeholder_player_ratio" in columns else "NULL"
     )
+    placeholder_players = (
+        "placeholder_players" if "placeholder_players" in columns else "NULL"
+    )
     sql = f"""
         SELECT crawled_at, category_value AS dist,
                {source.breakdown_column} AS value, {source.games_column} AS games,
-               {ratio} AS placeholder_ratio, {player_ratio} AS placeholder_player_ratio
+               {ratio} AS placeholder_ratio, {player_ratio} AS placeholder_player_ratio,
+               {placeholder_players} AS placeholder_players
           FROM {source.table}
          WHERE period_type = '{period_type}' AND category_type = 'dist'
            AND crawled_at IN ({quoted}){_active_filter(source.table)}
@@ -759,10 +778,14 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
     player_ratio_column = (
         "MAX(placeholder_player_ratio)" if "placeholder_player_ratio" in columns else "NULL"
     )
+    players_column = (
+        "MAX(placeholder_players)" if "placeholder_players" in columns else "NULL"
+    )
     sql = f"""
         SELECT category_value AS dist, game_cnt, peak_online_players,
                MAX(peak_hour) AS peak_hour, {ratio_column} AS placeholder_ratio,
-               {player_ratio_column} AS placeholder_player_ratio
+               {player_ratio_column} AS placeholder_player_ratio,
+               {players_column} AS placeholder_players
           FROM {table}
          WHERE period_type = '{period_type}' AND crawled_at = '{period_key}'
            AND category_type = 'dist_peak'{_active_filter(table)}
@@ -795,6 +818,8 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
                 "placeholderRatio": _as_ratio(row.get("placeholder_ratio")),
                 # 人数口径：该分型在线人数里哨兵值贡献的占比（UI 说「这 8,526 人含水」用它）
                 "placeholderPlayerRatio": _placeholder_player_ratio(row),
+                # 整数口径：兜底贡献的在线人数（8,526 − 7,400 = 1,126，不用 round）
+                "placeholderPlayers": _as_int(row.get("placeholder_players")),
             }
         )
     breakdown.sort(
@@ -857,6 +882,16 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
         ]
         overall_ratio = max(known) if known else None
 
+    if total_row is not None:
+        overall_placeholder_players = _as_int(total_row.get("placeholder_players"))
+    else:
+        known_players = [
+            item["placeholderPlayers"]
+            for item in breakdown
+            if item["placeholderPlayers"] is not None
+        ]
+        overall_placeholder_players = sum(known_players) if known_players else None
+
     return {
         "crawledAt": str(rows[0].get("peak_hour") or ""),
         "gameCnt": game_cnt,
@@ -869,6 +904,8 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
         "placeholderRatio": overall_ratio,
         # 人数口径：该小时总在线里哨兵值贡献的占比（W46 = 23.78%）
         "placeholderPlayerRatio": overall_player_ratio,
+        # 整数口径：该小时兜底贡献的在线人数（W46 ALL = 34,800；扣减用它，不要 round 反推）
+        "placeholderPlayers": overall_placeholder_players,
         "breakdown": breakdown,
     }
 
@@ -918,6 +955,11 @@ def _build_breakdown(
                 # 不能用峰值小时的推导公式硬算
                 "placeholderPlayerRatio": _as_ratio(
                     (current.get(dist) or {}).get("placeholder_player_ratio")
+                ),
+                # 兜底贡献的在线人数（整数，DWS 按 SUM(v where v=哨兵) 算）。
+                # 前端算「扣除兜底后余量」时用这个，别再用 ratio×total（会 ±1 抖动）
+                "placeholderPlayers": _as_int(
+                    (current.get(dist) or {}).get("placeholder_players")
                 ),
             }
         )
@@ -1293,13 +1335,13 @@ def report(
     coverage_notes: dict[str, str] = {}
     for source in LINE_SOURCES:
         series = lines[source.key]
-        current_partial, current_note = _coverage(
+        current_partial, current_note, current_reason = _coverage(
             period,
             period_key,
             source.coverage_start,
             _as_int((series.get(period_key) or {}).get("sample_hours")),
         )
-        prev_partial, prev_note = (
+        prev_partial, prev_note, prev_reason = (
             _coverage(
                 period,
                 prev_period,
@@ -1307,7 +1349,7 @@ def report(
                 _as_int((series.get(prev_period) or {}).get("sample_hours")),
             )
             if prev_period
-            else (False, None)
+            else (False, None, None)
         )
         # 本期或上期覆盖不全，环比一律置 null：半周去重 / 首轮孤点都会造出假涨幅
         delta_blocked = (
@@ -1347,6 +1389,9 @@ def report(
                         else f"{source.label}上期覆盖不全"
                     ),
                     "detail": current_note or prev_note,
+                    # source_start = 那几天本来就没有源数据（补不回来）；
+                    # collection_gap = 源数据可用范围内采少了（可修）
+                    "reason": current_reason if current_partial else prev_reason,
                     "action": (
                         "本期与上期的环比一律置 null（deltaBlocked），"
                         "趋势点保留原始值，但不代表完整周"

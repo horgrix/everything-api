@@ -236,6 +236,9 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   W45 `dist_0` 中位数正好 8.0 → 不判低样本：它是高区分度的商业榜，那一周只是覆盖只有 8 小时，
   属于覆盖问题，交给 `online_partial_coverage`，两条提示不叠加。
   前端据此决定「标低样本」而不是自己猜数值分布（猜「全部相同」会把真故障一起藏掉）
+- 覆盖 flag 还带 `reason`：`source_start` = 该期起点早于在线数据起点（那几天本来没有源数据，
+  补不回来，2026-11 的前 7 天就是）；`collection_gap` = 源数据可用范围内采少了（可修）。
+  两者都判「覆盖不全」，但处理方向不同，UI 文案可以区分
 - PC 在线榜的维度参数是 **`list_type`（下划线）**；传 `listType` 会 400 并提示正确写法
   （FastAPI 会静默忽略拼错的 query 参数，那样只会拿到混合分组榜单而看不出来）
 - **旧维度查历史周**：`list_type=pc_played / pc_emulator_played / app_hot_creative` 的行
@@ -333,6 +336,7 @@ DWS 的 builder 保证「分型行与 ALL 行同一批产出」，所以正常�
 | `lines[online].breakdown.items[].placeholderRatio` | app-小时行数 | **整个周期** | 这一周里该分型多少比例的采集行为哨兵值 |
 | `peakHour.placeholderPlayerRatio` / `peakHour.breakdown[].placeholderPlayerRatio` | 在线人数 | **峰值那一小时** | 这一小时的在线人数里哨兵值贡献了多少 |
 | `lines[online].breakdown.items[].placeholderPlayerRatio` | 在线人数 | **整个周期** | 这一周该分型的在线人数里哨兵值贡献了多少 |
+| `*.placeholderPlayers` | 整数人数 | 同上两窗口 | 兜底直接贡献的在线人数（W46 独立 7,400）。**算余量用它**：`peakOnlinePlayers - placeholderPlayers`，不要用 `ratio × total` 反推（会 ±1 抖动） |
 
 注意前两行的**分母口径相同但窗口不同**（W46 实测 0.43 vs 0.34），不是数据打架，
 也不要去对账。字段名与 DWS 表列 `placeholder_ratio` 保持一致，名字里的「ratio」不自带单位，
