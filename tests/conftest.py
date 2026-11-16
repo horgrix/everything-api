@@ -244,6 +244,38 @@ def _seed() -> None:
             ],
         )
 
+        # One Search：预约日表（某游戏最近 N 天预约趋势）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_reserve_v2_daily (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                app_id INTEGER NOT NULL,
+                app_name TEXT NULL,
+                distribution_type INTEGER NULL,
+                tag_1 TEXT NULL,
+                hints TEXT NULL,
+                total_reserve_count INTEGER NULL,
+                reserve_count INTEGER NULL,
+                hour_cnt INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_reserve_v2_daily "
+            "(crawled_at, app_id, app_name, total_reserve_count, reserve_count) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("2026-11-08", 1042742, "代号T3", 3680, 700),
+                ("2026-11-09", 1042742, "代号T3", 3980, 300),
+                ("2026-11-15", 1042742, "代号T3", 4548, 868),
+                # 别的游戏不应混进来
+                ("2026-11-15", 999999, "别的游戏", 100, 50),
+                # 窗口外的旧数据
+                ("2026-10-01", 1042742, "代号T3", 1000, 100),
+            ],
+        )
+
         # 访问统计表（MySQL 侧见 sql/visit_event.sql，这里放 SQLite 等价结构）
         conn.execute(
             """
@@ -297,6 +329,12 @@ def client():
 
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def db_path():
+    """测试库文件路径（本 conftest 实例创建的那个，别处 import _DB_PATH 会拿到另一份）。"""
+    return _DB_PATH
 
 
 @pytest.fixture
