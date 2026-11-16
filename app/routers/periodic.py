@@ -297,12 +297,15 @@ _COLUMNS: dict[str, set[str]] = {}
 
 
 def _columns_of(table: str) -> set[str]:
-    """取表的列名（每表只查一次）。顺便兼容 MySQL / 测试用 SQLite。"""
+    """取表的列名（每表只查一次）。MySQL / 测试用 SQLite 都适用。"""
     if table in _COLUMNS:
         return _COLUMNS[table]
     try:
         columns = set(run_query(f"SELECT * FROM {table} LIMIT 0", max_rows=1).columns)
-    except SqlExecutionError:  # 表不存在/无权限：交给真正的查询去报错
+    except SqlExecutionError as exc:
+        # 探列失败就「不过滤」并告警，绝不把维度的过滤条件变成整篇 500；
+        # 真正的查询会再报错，错误信息比这里丢出来更准确
+        logger.warning("探测 %s 的列名失败，本轮按“无 is_active 过滤”处理：%s", table, exc)
         return set()
     _COLUMNS[table] = columns
     return columns
@@ -311,8 +314,9 @@ def _columns_of(table: str) -> set[str]:
 def _active_filter(table: str) -> str:
     """表里 is_active 列时只取有效行：DWS 下线残留是置 0 不删数据。
 
-    用 COALESCE(is_active, 1)：只有显式置 0 的历史残骸被排除，
-    加列之前写入的 NULL 行仍然算有效，避免静默丢数据。
+    本库这几张表的 is_active 是 `tinyint NOT NULL DEFAULT 1`（实操 NULL 计数为 0），
+    所以 COALESCE 是防御性写法：将来若出现 NULL 行，按“有效”处理而不静默丢数。
+    列名探测结果进程内缓存：给报表表新增 is_active 后需重启服务才会自动生效。
     """
     return " AND COALESCE(is_active, 1) = 1" if "is_active" in _columns_of(table) else ""
 
