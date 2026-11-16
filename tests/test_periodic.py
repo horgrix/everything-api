@@ -235,3 +235,12 @@ def test_online_metric_decisions(client):
     assert older_kpis["online_game_cnt"]["value"] == 581
     assert older_kpis["online_game_cnt"]["deltaBlocked"] == "coverage_partial"
     assert older_kpis["online_game_cnt"]["deltaPct"] is None
+
+
+def test_active_filter_applies_only_where_column_exists(client):
+    """is_active 列存在才加过滤，且 NULL 视为有效（只排显式置 0 的残骸）。"""
+    from app.routers import periodic
+
+    assert periodic._active_filter(periodic.AD_TABLE) == " AND COALESCE(is_active, 1) = 1"
+    # 下载/在线周期表在夹具里没有 is_active 列 → 不得凭空加条件（线上加列后会自动生效）
+    assert periodic._active_filter(periodic.DOWNLOAD_TABLE) == ""

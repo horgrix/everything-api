@@ -308,8 +308,12 @@ def _columns_of(table: str) -> set[str]:
 
 
 def _active_filter(table: str) -> str:
-    """表里 is_active 列时只取有效行：DWS 下线残留是置 0 不删数据。"""
-    return " AND is_active = 1" if "is_active" in _columns_of(table) else ""
+    """表里 is_active 列时只取有效行：DWS 下线残留是置 0 不删数据。
+
+    用 COALESCE(is_active, 1)：只有显式置 0 的历史残骸被排除，
+    加列之前写入的 NULL 行仍然算有效，避免静默丢数据。
+    """
+    return " AND COALESCE(is_active, 1) = 1" if "is_active" in _columns_of(table) else ""
 
 
 def _validate_period(period_type: str, key: str | None) -> str | None:
