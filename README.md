@@ -176,26 +176,6 @@ curl 'http://127.0.0.1:8000/api/v09/data/home/ad-rank?month=2026-11&limit=5'
 - `totals` 只累加这三类；`category_value` 不在 0/1/2 的行（如广告表的「未分类」）单独归集到 `unclassified`，不进占比分母
 - 三张月表缺表/缺数时返回 `code 40001` 与数据库原文，不会伪造数据
 
-### 2.1 One Search 聚合 — `GET /api/v09/data/search/reserve-trend?app_id=&days=`
-
-One Search 详情页的「游戏预约趋势」由后端聚合（读 `dws_taptap_reserve_v2_daily`，前端不再拼 SQL）：
-
-| 参数 | 说明 |
-|------|------|
-| `app_id` | 必填，TapTap APPID |
-| `days` | 最近 N 天（含今天，`Asia/Shanghai`），1~365，默认 30 |
-
-```bash
-curl 'http://127.0.0.1:8000/api/v09/data/search/reserve-trend?app_id=1042742&days=30'
-# {"code":0,"message":"success","data":{
-#   "app_id":1042742,"days":30,"start":"2026-10-18","end":"2026-11-16",
-#   "points":[{"date":"2026-10-18","added":451,"total":4051}, ...],
-#   "latest":{"date":"2026-11-16","added":612,"total":16633}}, "total":30}
-```
-
-- `added` = 当日新增预约（表里的 `reserve_count`），`total` = 当日快照的累计预约（`total_reserve_count`）
-- 该游戏窗口内无数据时返回 `points: []`、`latest: null`（不是报错）
-
 ### 3. 列出表 — `GET /api/v09/data/tables`
 
 MySQL 下执行 `SHOW FULL TABLES`，返回表名数组，方便排查「接口查的表到底在不在」。
