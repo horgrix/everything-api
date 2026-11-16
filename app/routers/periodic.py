@@ -613,6 +613,20 @@ def _load_line_rows(period_type: str) -> dict[str, dict[str, dict[str, Any]]]:
     return _cache_set(cache_key, result)
 
 
+def _overview_argmax_select(columns: set[str]) -> str:
+    """概览表「MAX(game_cnt) 取值小时」那一列的 SELECT 片段（没有就是空串）。
+
+    列名有两个版本：DWS 口述/提交信息里叫 `online_game_cnt_at`，线上表里实际叫
+    `online_game_cnt_hour`（两者数据一样，W46 = 2026-11-15 22）。两个都认，统一
+    别名成 `online_game_cnt_at` 往上走，免得下游记两个名字。
+    """
+    if "online_game_cnt_at" in columns:
+        return ", online_game_cnt_at"
+    if "online_game_cnt_hour" in columns:
+        return ", online_game_cnt_hour AS online_game_cnt_at"
+    return ""
+
+
 def _load_overview() -> dict[str, dict[str, Any]]:
     """概览周表（仅周报）：按游戏与跨表校验用。"""
     cache_key = ("overview",)
@@ -621,9 +635,7 @@ def _load_overview() -> dict[str, dict[str, Any]]:
         return cached
 
     # online_game_cnt_at 是 DWS 后加的列（MAX(game_cnt) 那条快照的时间），老概览表没有
-    argmax_column = (
-        ", online_game_cnt_at" if "online_game_cnt_at" in _columns_of(OVERVIEW_TABLE) else ""
-    )
+    argmax_column = _overview_argmax_select(_columns_of(OVERVIEW_TABLE))
     sql = f"""
         SELECT week_key, week_start, week_end,
                online_game_cnt, online_peak_players{argmax_column},

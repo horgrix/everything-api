@@ -484,7 +484,7 @@ def _seed() -> None:
                 week_start TEXT NULL,
                 week_end TEXT NULL,
                 online_game_cnt INTEGER NULL,
-                online_game_cnt_at TEXT NULL,
+                online_game_cnt_hour TEXT NULL,
                 online_peak_players INTEGER NULL,
                 online_peak_pc INTEGER NULL,
                 online_peak_pc_emulator INTEGER NULL,
@@ -512,7 +512,7 @@ def _seed() -> None:
         )
         conn.executemany(
             "INSERT INTO dws_periodic_report_overview_weekly "
-            "(week_key, week_start, week_end, online_game_cnt, online_game_cnt_at, "
+            "(week_key, week_start, week_end, online_game_cnt, online_game_cnt_hour, "
             " online_peak_players, "
             " torchlight_download_total, torchlight_avg_online_players, "
             " heartopia_download_total, heartopia_avg_online_players, updated_at) "

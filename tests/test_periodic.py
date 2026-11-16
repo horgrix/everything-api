@@ -647,3 +647,17 @@ def test_roster_spec_requires_column(monkeypatch):
     # 广告线没有名单覆盖的概念
     monkeypatch.setitem(periodic._COLUMNS, periodic.LINE_BY_KEY["ad"].table, {"app_cnt"})
     assert periodic._roster_spec(periodic.LINE_BY_KEY["ad"]) is None
+
+
+def test_overview_argmax_column_accepts_both_names():
+    """「MAX(game_cnt) 取值小时」线上叫 online_game_cnt_hour，DWS 口述叫 _at：两个都认。"""
+    from app.routers.periodic import _overview_argmax_select
+
+    assert _overview_argmax_select({"week_key", "online_game_cnt_hour"}) == (
+        ", online_game_cnt_hour AS online_game_cnt_at"
+    )
+    assert _overview_argmax_select({"week_key", "online_game_cnt_at"}) == (
+        ", online_game_cnt_at"
+    )
+    # 老概览表两列都没有：不拼、不报错，at 字段为 null
+    assert _overview_argmax_select({"week_key", "online_game_cnt"}) == ""
