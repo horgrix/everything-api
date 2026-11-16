@@ -778,9 +778,22 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
             all_peak = None
         sums_match = all_peak is None or sum_players == all_peak
 
-    overall_player_ratio = (
-        _placeholder_player_ratio(total_row) if total_row is not None else None
-    )
+    if total_row is not None:
+        # 有 ALL 行：直接用它的两个聚合
+        overall_player_ratio = _placeholder_player_ratio(total_row)
+    else:
+        # 没有 ALL 行（新周期首日还没重算）：按分型的人数和再除该小时总人数
+        known_pairs = [
+            (item["placeholderPlayerRatio"], item["peakOnlinePlayers"])
+            for item in breakdown
+            if item["placeholderPlayerRatio"] is not None
+        ]
+        if known_pairs and peak_players:
+            overall_player_ratio = round(
+                sum(ratio * players for ratio, players in known_pairs) / peak_players, 4
+            )
+        else:
+            overall_player_ratio = None
     if total_row is not None:
         overall_ratio = _as_ratio(total_row.get("placeholder_ratio"))
     else:

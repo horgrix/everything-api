@@ -213,6 +213,15 @@ def _seed() -> None:
             "SET placeholder_ratio = 0.79 "
             "WHERE category_type = 'dist' AND crawled_at = '2026-46' AND category_value = '1'"
         )
+        # W45 没有 ALL 行（模拟新周期首日还没重算），只有分型行带占位占比
+        for value, ratio in (("0", 0.4), ("1", 0.6), ("2", 0.7)):
+            conn.execute(
+                "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+                "SET placeholder_ratio = ? "
+                "WHERE category_type = 'dist_peak' AND crawled_at = '2026-45' "
+                "AND category_value = ?",
+                (ratio, value),
+            )
         # dist_peak 用 W46 真库的三个值：行数口径 0.4295 / 0.7872 / 0.7143，ALL 0.5329
         for value, ratio in (("0", 0.4295), ("1", 0.7872), ("2", 0.7143), ("ALL", 0.5329)):
             conn.execute(

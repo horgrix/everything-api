@@ -277,6 +277,9 @@ def test_peak_hour_reads_dist_peak_and_breakdown_marks_summable(client):
     assert older_peak["crawledAt"] == "2026-11-08 20"
     assert older_peak["sumPeakOnlinePlayers"] == 125697
     assert older_peak["sumsMatch"] is True
+    # W45 没有 ALL 行：人数口径按各分型的人数贡献求和再除总人数
+    # (177+38+49)*100 = 26,400 / 125,697 = 0.2100
+    assert older_peak["placeholderPlayerRatio"] == pytest.approx(0.21, abs=5e-3)
 
 
 def test_concurrent_kpi_explains_overview_lag():
