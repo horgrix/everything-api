@@ -176,9 +176,59 @@ def test_report_labels_and_kpi_notes(client):
     # 没有口径需要解释的指标不带 note
     assert "note" not in _kpi(payload, "download_total")
 
+    # 款数差异已核实为两个不同指标（并发 vs 去重），只做 info 说明，不再报成数据错误
     mismatch = next(
         flag for flag in payload["flags"] if flag["item"] == "online_game_cnt_mismatch"
     )
-    assert mismatch["level"] == "medium"
-    assert "在线周期表" in mismatch["action"]
-    assert "两表统计池不同" in mismatch["detail"]
+    assert mismatch["level"] == "info"
+    assert "并发" in mismatch["detail"] and "去重" in mismatch["detail"]
+    assert "concurrent_game_cnt" in mismatch["action"]
+
+
+def test_online_metric_decisions(client):
+    """在线口径三条：去重款数为主、并发款数为副且无环比、W45 半周不带环比。"""
+    payload = _report(client)["data"]
+    online = next(line for line in payload["lines"] if line["key"] == "online")
+    kpis = {kpi["key"]: kpi for kpi in online["kpis"]}
+
+    dedupe = kpis["online_game_cnt"]
+    assert dedupe["label"] == "在线游戏数（去重）"
+    assert dedupe["value"] == 860
+    # 上期 W45 只有 11-07~11-08 两天，860 vs 581 的 +48.0% 是假的 → 环比整体置 null
+    assert dedupe["prevValue"] is None
+    assert dedupe["deltaPct"] is None and dedupe["deltaAbs"] is None
+    assert dedupe["deltaComparable"] is False
+    assert dedupe["deltaBlocked"] == "prev_coverage_partial"
+
+    # 在线峰值同一条线同样不可比
+    assert kpis["online_peak_players"]["deltaPct"] is None
+    assert kpis["online_peak_players"]["deltaComparable"] is False
+
+    # 副指标：峰值小时并发款数，没有环比，也不进 6 个主 KPI
+    concurrent = kpis["concurrent_game_cnt"]
+    assert concurrent["value"] == 671
+    assert concurrent["label"] == "峰值小时同时在线款数"
+    assert concurrent["deltaPct"] is None and concurrent["deltaComparable"] is False
+    assert concurrent["deltaBlocked"] == "secondary_metric"
+    assert "concurrent_game_cnt" not in {kpi["key"] for kpi in payload["coreKpis"]}
+
+    # 分型各自峰值不可加（146,929 ≠ 146,354），同小时快照可加
+    peak_hour = online["peakHour"]
+    assert peak_hour["crawledAt"] == "2026-11-13 22"
+    assert peak_hour["gameCnt"] == 653
+    assert peak_hour["peakOnlinePlayers"] == 146354
+    assert [item["distributionType"] for item in peak_hour["breakdown"]] == ["0", "1", "2"]
+    assert sum(item["gameCnt"] for item in peak_hour["breakdown"]) == 653
+    assert sum(item["peakOnlinePlayers"] for item in peak_hour["breakdown"]) == 146354
+    assert peak_hour["sumsMatch"] is True
+
+    flag_items = {flag["item"] for flag in payload["flags"]}
+    assert "online_partial_coverage" in flag_items
+
+    # W45 自身也是半周：现场置 null，而不是拿更早的期硬凑一个环比
+    older = _report(client, key="2026-45")["data"]
+    older_online = next(line for line in older["lines"] if line["key"] == "online")
+    older_kpis = {kpi["key"]: kpi for kpi in older_online["kpis"]}
+    assert older_kpis["online_game_cnt"]["value"] == 581
+    assert older_kpis["online_game_cnt"]["deltaBlocked"] == "coverage_partial"
+    assert older_kpis["online_game_cnt"]["deltaPct"] is None

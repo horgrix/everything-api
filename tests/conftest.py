@@ -185,6 +185,58 @@ def _seed() -> None:
                 ("weekly", "2026-46", "dist", "2", 177, 11186, 8470.87, None),
             ],
         )
+        # 定期报告：全局峰值那一小时的同小时快照（W46 = 11-13 22 点，653 款 / 146,354 人）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_details_hourly (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                app_id INTEGER NOT NULL,
+                distribution_type INTEGER NOT NULL,
+                online_players INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_v2_hourly (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                game_cnt INTEGER NOT NULL,
+                online_players INTEGER NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_v2_hourly "
+            "(crawled_at, game_cnt, online_players) VALUES (?, ?, ?)",
+            [
+                ("2026-11-12 21", 640, 140000),
+                ("2026-11-13 22", 653, 146354),
+                ("2026-11-14 20", 611, 132000),
+            ],
+        )
+
+        def _detail_rows(hour, dist, count, total, fill=289):
+            """count 行、合计 total（其余行用 fill，最后一行补齐），保证 SUM 精确等于 total。"""
+            step = min(fill, total // max(count, 1) or 1)
+            rows = [(hour, 10_000_000 + dist * 1000 + i, dist, step) for i in range(count - 1)]
+            rows.append((hour, 10_000_000 + dist * 1000 + count - 1, dist,
+                         total - step * (count - 1)))
+            return rows
+
+        detail_rows = []
+        # 峰值小时（11-13 22）：440+94+119=653 款，127110+8526+10718=146,354 人，严格可加
+        detail_rows += _detail_rows("2026-11-13 22", 0, 440, 127110)
+        detail_rows += _detail_rows("2026-11-13 22", 1, 94, 8526, fill=90)
+        detail_rows += _detail_rows("2026-11-13 22", 2, 119, 10718, fill=90)
+        # 其它小时只放少量行：一旦查询取错小时，条数/合计立刻对不上
+        detail_rows += _detail_rows("2026-11-12 21", 0, 3, 900, fill=300)
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_details_hourly "
+            "(crawled_at, app_id, distribution_type, online_players) VALUES (?, ?, ?, ?)",
+            detail_rows,
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_ad_aggr_v6_periodic_report (

@@ -230,7 +230,7 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
 | key | 含义 | 单位 | 来源业务线 |
 |-----|------|------|------------|
-| `online_game_cnt` | 在线游戏数 | 款 | online |
+| `online_game_cnt` | 在线游戏数（去重） | 款 | online |
 | `online_peak_players` | 在线峰值 | 人 | online |
 | `download_total` | 下载总量 | 次 | download |
 | `download_pc` | PC 下载量 | 次 | download |
@@ -239,8 +239,7 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
 每个 KPI 对象字段：`value` / `prevValue` / `prevPeriodKey` / `deltaAbs` / `deltaPct` /
 `direction` / `deltaComparable` / `trend[]` / `availablePeriods` / `historyPoints` /
-`insufficientHistory` / `hasValue` / `unit` / `isInt`；需要解释口径的指标额外带 `note`
-（目前只有广告三项：每游戏每小时在每个广告坑位出现计 1 次，**不是用户级曝光量**）。
+`insufficientHistory` / `hasValue` / `unit` / `isInt`；需要解释口径的指标额外带 `note`（目前只有广告三项：每游戏每小时在每个广告坑位出现计 1 次，**不是用户级曝光量**）。
 `meta` 里还有整篇的 `availablePeriods`、`insufficientHistory`、`isPartial`、`retiredColumns`、`distLabels`。
 
 **在线类指标的口径已定**：以在线周期表 `dws_taptap_pc_online_peak_players_periodic_report`
@@ -250,6 +249,39 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
 分发类型文案统一为：`0 商业游戏 / 1 独立小游戏 / 2 Maker 小游戏`（全站一致，旧名
 「创意工坊 / TapMaker」已废弃）。
+
+**在线款数：两个指标，不许相减**
+
+| 指标 | 含义 | 位置 | 环比 |
+|------|------|------|------|
+| `online_game_cnt` | 本周有在线记录的游戏（`app_id` 去重）**主口径** | `coreKpis` / `lines[online].kpis` | 正常（覆盖不全时置 null） |
+| `concurrent_game_cnt` | 峰值那一小时同时在线的款数（概览表口径） | 只在 `lines[online].kpis` | **永远为 null**（`deltaBlocked=secondary_metric`） |
+
+W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻 vs 整周），不是数据错误。
+
+**环比会在什么时候被置 null**：KPI 上的 `deltaBlocked` 字段给出原因
+
+| 取值 | 含义 |
+|------|------|
+| `coverage_partial` | 本期数据覆盖不全（在线线自 2026-11-07 才采集，W45 / 2026-11 均为半期） |
+| `prev_coverage_partial` | 上期覆盖不全（如 W46 拿 W45 的 581 当基数算出 +48%，假的） |
+| `secondary_metric` | 副指标本来就不出环比 |
+
+置 null 时 `prevValue` / `deltaAbs` / `deltaPct` / `prevPeriodKey` 一并清空、`deltaComparable=false`，
+避免调用方自己用 `prevValue` 再算一次；`trend[]` 仍保留原始点。该期还会多一条 `flags`
+（如 `online_partial_coverage`），`detail` 里直接写着「仅覆盖 11-07~11-08（2/7 天）」。
+
+**同小时快照 `lines[online].peakHour`**（取不到时字段不存在，不影响整篇）：
+
+```json
+{"crawledAt":"2026-11-13 22","gameCnt":653,"peakOnlinePlayers":146354,
+ "sumGameCnt":653,"sumPeakOnlinePlayers":146354,"sumsMatch":true,
+ "breakdown":[{"distributionType":"0","label":"商业游戏","gameCnt":440,"peakOnlinePlayers":127110}, …]}
+```
+
+分型拆解默认给的是「每个分型各自周内峰值」（W46 相加 146,929 > 总峰值 146,354，
+不同时刻的东西不能相加）；`peakHour` 给的是全局峰值那一小时的同小时快照，**可以堆叠**，
+`sumsMatch=false` 时可当作口径被动过的告警。
 
 与 `report-metric-spec.json` 的对应关系：KPI key 完全一致；spec 里的 `qualityFlags`
 就是本接口顶层的 `flags`（同一组 `{level,item,label,detail,action}` 对象）。

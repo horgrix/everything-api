@@ -63,6 +63,9 @@ ONLINE_TABLE = "dws_taptap_pc_online_peak_players_periodic_report"
 DOWNLOAD_RANK_TABLE = "dws_taptap_download_periodic_rank"
 AD_RANK_TABLE = "dws_taptap_ad_aggr_v6_periodic_rank"
 ONLINE_RANK_TABLE = "dws_taptap_pc_online_peak_players_periodic_rank"
+# 在线明细（小时级）与 v2 汇总：用来取「全局峰值那一小时」的同小时分型快照
+ONLINE_DETAILS_TABLE = "dws_taptap_pc_online_peak_players_details_hourly"
+ONLINE_V2_TABLE = "dws_taptap_pc_online_peak_players_v2_hourly"
 
 # distribution_type → 业务名称（前端不再自己维护一份）
 DIST_LABELS = {"0": "商业游戏", "1": "独立小游戏", "2": "Maker 小游戏"}
@@ -93,6 +96,9 @@ RANK_CATEGORIES = ("top", "gain", "loss")
 SUSPECT_JUMP_RATIO = 3.0
 # 概览表与在线周期表的容差（相对差）
 OVERVIEW_TOLERANCE = 0.01
+
+# 在线数据从这一天开始采集；更早的期（如 W45、2026-11）覆盖不全，环比不可比
+ONLINE_COVERAGE_START = "2026-11-07"
 # 进程内结果缓存秒数：报告一天只更新几次，60 秒内的重复请求不必再打库
 CACHE_TTL_SECONDS = 60
 
@@ -118,6 +124,8 @@ class LineSource:
     breakdown_column: str
     games_column: str
     metrics: tuple[MetricSpec, ...]
+    # 该业务线的数据从哪天开始有：期起点早于它就算覆盖不全
+    coverage_start: str | None = None
 
 
 LINE_SOURCES: tuple[LineSource, ...] = (
@@ -148,8 +156,20 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "次",
                 note="采集位次：每游戏每小时在每个广告坑位出现计 1 次，不等于用户曝光量",
             ),
-            MetricSpec("ad_app", "ad_views", "APP 曝光", "次", note="采集位次，每游戏每小时每个坑位计 1 次"),
-            MetricSpec("ad_pcebid", "pcebid_views", "PC 曝光", "次", note="资源互换位次，每游戏每小时每个坑位计 1 次"),
+            MetricSpec(
+                "ad_app",
+                "ad_views",
+                "APP 曝光",
+                "次",
+                note="采集位次，每游戏每小时每个坑位计 1 次",
+            ),
+            MetricSpec(
+                "ad_pcebid",
+                "pcebid_views",
+                "PC 曝光",
+                "次",
+                note="资源互换位次，每游戏每小时每个坑位计 1 次",
+            ),
             MetricSpec("app_cnt", "app_cnt", "投放游戏数", "款"),
         ),
     ),
@@ -162,8 +182,15 @@ LINE_SOURCES: tuple[LineSource, ...] = (
         metrics=(
             MetricSpec("online_peak_players", "peak_online_players", "在线峰值", "人"),
             MetricSpec("online_avg", "avg_online_players", "周均在线", "人", is_int=False),
-            MetricSpec("online_game_cnt", "game_cnt", "在线游戏数", "款"),
+            MetricSpec(
+                "online_game_cnt",
+                "game_cnt",
+                "在线游戏数（去重）",
+                "款",
+                note="本周有在线记录的游戏，按 app_id 去重；不等于某一小时的并发款数",
+            ),
         ),
+        coverage_start=ONLINE_COVERAGE_START,
     ),
 )
 
@@ -297,6 +324,30 @@ def _is_partial(period_type: str, key: str) -> bool:
     """当期是否还没走完（月中取数时月底未到）。未结束的期不能拿去和完整期比环比。"""
     start, end = _period_range(period_type, key)
     return date.fromisoformat(end) >= _today()
+
+
+def _coverage(
+    period_type: str, key: str, coverage_start: str | None
+) -> tuple[bool, str | None]:
+    """某一期的数据覆盖是否完整。
+
+    业务线有「起始采集日」时，期起点早于它就是半期数据（如在线线 W45 只有 11-07~11-08），
+    这种期的环比不可比。返回 (是否覆盖不全, 人话说明)。
+    """
+    if not coverage_start:
+        return False, None
+    start, end = _period_range(period_type, key)
+    if start >= coverage_start:
+        return False, None
+    covered_from = max(start, coverage_start)
+    covered_days = (date.fromisoformat(end) - date.fromisoformat(covered_from)).days + 1
+    total_days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+    if covered_days >= total_days:
+        return False, None
+    return True, (
+        f"在线数据自 {coverage_start} 起才开始采集，{key} 仅覆盖 "
+        f"{covered_from}~{end}（{covered_days}/{total_days} 天）"
+    )
 
 
 def _cache_get(cache_key: tuple) -> Any | None:
@@ -437,8 +488,15 @@ def _build_kpi(
     periods: list[str],
     window: int,
     is_partial: bool,
+    delta_blocked: str | None = None,
 ) -> dict[str, Any]:
-    """一个指标的当期值 / 上期值 / 环比 / 趋势点 / 可用期数。"""
+    """一个指标的当期值 / 上期值 / 环比 / 趋势点 / 可用期数。
+
+    delta_blocked 非空时环比一律置 null（不让前端自己除一个看似合理的涨幅）：
+      - coverage_partial      本期数据覆盖不全（如在线线 W45 只有 2 天）
+      - prev_coverage_partial 上期覆盖不全，拿它当基数会算出一个假的涨幅
+      - secondary_metric      副指标，本来就不出环比
+    """
     available = [
         period
         for period in periods
@@ -466,7 +524,14 @@ def _build_kpi(
     ]
 
     delta_pct = _ratio(value, prev_value)
-    return {
+    if delta_blocked:
+        # 不可比：连上期值和环比一起置 null，避免前端又用 prevValue 自己算出假涨幅
+        prev_value = None
+        prior_key = None
+        delta_abs = None
+        delta_pct = None
+
+    result = {
         "key": spec.key,
         "line": line_key,
         "label": spec.label,
@@ -479,7 +544,7 @@ def _build_kpi(
         "deltaPct": delta_pct,
         "direction": _direction(delta_pct),
         # 本期未结束（月中/周中）时环比不可比：数值照给，但别当成真实下跌
-        "deltaComparable": not is_partial and delta_pct is not None,
+        "deltaComparable": not is_partial and not delta_blocked and delta_pct is not None,
         "trend": trend,
         "availablePeriods": available,
         "historyPoints": len(available),
@@ -488,6 +553,129 @@ def _build_kpi(
         "hasValue": value is not None,
         # 口径备注：只有需要解释的指标才有（如广告是位次而不是用户曝光）
         **(({"note": spec.note}) if spec.note else {}),
+    }
+    if delta_blocked:
+        result["deltaBlocked"] = delta_blocked
+    return result
+
+
+def _build_concurrent_kpi(
+    overview: dict[str, dict[str, Any]],
+    period_key: str,
+    periods: list[str],
+    window: int,
+) -> dict[str, Any]:
+    """副指标：峰值小时同时在线款数（概览表的 online_game_cnt）。
+
+    这个概念与主线「本周去重款数」不同：前者是某一小时的并发款数（同一时刻），
+    后者是整周 app_id 去重。两者相差几十到上百款都是正常的，因此**不出环比**。
+    """
+    spec = MetricSpec(
+        "concurrent_game_cnt",
+        "online_game_cnt",
+        "峰值小时同时在线款数",
+        "款",
+        note="该周并发最高那一小时同时在线的款数（概览表口径），与「本周去重款数」不同口径，两者不可相减",
+    )
+    available = [
+        period
+        for period in periods
+        if _pick_value(overview.get(period), spec.column) is not None
+    ]
+    value = _pick_value(overview.get(period_key), spec.column)
+    return {
+        "key": spec.key,
+        "line": "online",
+        "label": spec.label,
+        "unit": spec.unit,
+        "isInt": True,
+        "value": value,
+        "prevValue": None,
+        "prevPeriodKey": None,
+        "deltaAbs": None,
+        "deltaPct": None,
+        "direction": "flat",
+        "deltaComparable": False,
+        "deltaBlocked": "secondary_metric",
+        "trend": [
+            {
+                "period": period,
+                "label": _period_label_short(period),
+                "value": _pick_value(overview[period], spec.column),
+            }
+            for period in available[-window:]
+        ],
+        "availablePeriods": available,
+        "historyPoints": len(available),
+        "insufficientHistory": len(available) < INSUFFICIENT_POINTS,
+        "hasValue": value is not None,
+        "note": spec.note,
+    }
+
+
+def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
+    """全局峰值那一小时的在线分型快照。
+
+    分型拆解默认是「每个分型各自周内峰值」，三者峰值出现在不同小时，加不到一起。
+    这里额外汇总同一小时的快照：三项 gameCnt / peakOnlinePlayers 相加后严格等于
+    该小时的总值，可以放心画堆叠图。取不到（表缺失 / 当天明细被清）就返回 None，
+    不影响整篇报告。
+    """
+    start, end = _period_range(period_type, period_key)
+    sql = f"""
+        SELECT d.distribution_type AS dist,
+               COUNT(*) AS game_cnt,
+               SUM(d.online_players) AS peak_online_players,
+               MAX(d.crawled_at) AS crawled_at,
+               MAX(k.total_players) AS total_players,
+               MAX(k.total_games) AS total_games
+          FROM {ONLINE_DETAILS_TABLE} d
+          JOIN (
+                SELECT p.crawled_at AS crawled_at,
+                       p.online_players AS total_players,
+                       p.game_cnt AS total_games
+                  FROM {ONLINE_V2_TABLE} p
+                 WHERE p.crawled_at >= '{start}' AND p.crawled_at <= '{end} 23:59'
+                 ORDER BY p.online_players DESC
+                 LIMIT 1
+               ) k ON k.crawled_at = d.crawled_at
+         WHERE d.crawled_at = k.crawled_at
+         GROUP BY d.distribution_type
+    """
+    try:
+        rows = _query(sql)
+    except SqlExecutionError as exc:  # 表缺失/当天明细被清：降级，不让整篇报告挂掉
+        logger.info("峰值小时快照不可用：%s", exc)
+        return None
+    if not rows:
+        return None
+
+    breakdown = []
+    for row in rows:
+        dist = str(row.get("dist"))
+        breakdown.append(
+            {
+                "distributionType": dist,
+                "label": DIST_LABELS.get(dist, UNKNOWN_DIST),
+                "gameCnt": _as_int(row.get("game_cnt")),
+                "peakOnlinePlayers": _as_int(row.get("peak_online_players")),
+            }
+        )
+    breakdown.sort(key=lambda item: (MAX_DIST_KEYS.index(item["distributionType"])
+                                     if item["distributionType"] in MAX_DIST_KEYS else 99))
+    total_games = _as_int(rows[0].get("total_games"))
+    total_players = _as_int(rows[0].get("total_players"))
+    sum_games = sum(item["gameCnt"] or 0 for item in breakdown)
+    sum_players = sum(item["peakOnlinePlayers"] or 0 for item in breakdown)
+    return {
+        "crawledAt": str(rows[0].get("crawled_at") or ""),
+        "gameCnt": total_games if total_games is not None else sum_games,
+        "peakOnlinePlayers": total_players if total_players is not None else sum_players,
+        "sumGameCnt": sum_games,
+        "sumPeakOnlinePlayers": sum_players,
+        # 同小时快照必须可加：不平就是口径被动过了，前端标红
+        "sumsMatch": sum_games == total_games and sum_players == total_players,
+        "breakdown": breakdown,
     }
 
 
@@ -622,7 +810,7 @@ def _build_flags(
     """数据质量标记：前端拿来加角标 / 提示，不用自己算。"""
     flags: list[dict[str, Any]] = []
 
-    # 1) 概览表与在线周期表口径不一致（两套统计池不同，不是旧快照：W45 概览偏大、W46 概览偏小）
+    # 1) 概览表与在线周期表：款数本来就是两个指标（并发 vs 去重），峰值才叫口径差异
     online_row = lines.get("online", {}).get(period_key) or {}
     overview_row = overview.get(period_key) or {}
     for column, label in (("online_peak_players", "在线峰值"), ("online_game_cnt", "在线游戏数")):
@@ -632,22 +820,42 @@ def _build_flags(
         if from_overview is None or from_line is None:
             continue
         base = max(abs(from_overview), abs(from_line), 1)
-        if abs(from_overview - from_line) / base > OVERVIEW_TOLERANCE:
+        if abs(from_overview - from_line) / base <= OVERVIEW_TOLERANCE:
+            continue
+        if column == "online_game_cnt":
+            # 已核过库：概览表是「峰值小时并发款数」，周期表是「周内去重款数」
             flags.append(
                 {
-                    "level": "medium",
-                    "item": f"{column}_mismatch",
-                    "label": f"{label}跨表口径差异",
+                    "level": "info",
+                    "item": "online_game_cnt_mismatch",
+                    "label": "在线款数两种口径并存",
                     "detail": (
-                        f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}"
-                        f"（{period_key}）；两表统计池不同，不是同一份数据的旧快照"
+                        f"概览表 {int(from_overview):,} 是峰值小时同时在线款数（并发）；"
+                        f"在线周期表 {int(from_line):,} 是本周有在线记录的游戏数（去重）。"
+                        f"相差 {abs(int(from_overview) - int(from_line)):,} 款属正常，不是数据错误"
                     ),
                     "action": (
-                        "已定口径：在线类指标一律用在线周期表（本接口返回值），"
-                        "概览表仅用于「按游戏」指标"
+                        "主口径用去重款数；并发款数已作为 concurrent_game_cnt 副指标输出，"
+                        "两者不要相减、不要算环比"
                     ),
                 }
             )
+            continue
+        flags.append(
+            {
+                "level": "medium",
+                "item": f"{column}_mismatch",
+                "label": f"{label}跨表口径差异",
+                "detail": (
+                    f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}"
+                    f"（{period_key}）；两表统计池不同，不是同一份数据的旧快照"
+                ),
+                "action": (
+                    "已定口径：在线类指标一律用在线周期表（本接口返回值），"
+                    "概览表仅用于「按游戏」指标"
+                ),
+            }
+        )
 
     # 2) 趋势期数不足的业务线
     for line_key, kpis in line_kpis.items():
@@ -855,19 +1063,57 @@ def report(
             for source in LINE_SOURCES
         }
         overview = _load_overview() if period == "weekly" else {}
+        # 全局峰值那一小时的同小时快照（只有在线线需要；取不到就降级为 None）
+        peak_hour = _load_peak_hour(period, period_key)
     except (ConfigError, SqlExecutionError) as exc:
         return _fail(exc)
 
     # 概览表可能缺这一期（月报没有概览表），此时按游戏区块返回空
     line_payloads = []
     line_kpis: dict[str, list[dict[str, Any]]] = {}
+    coverage_flags: list[dict[str, Any]] = []
     for source in LINE_SOURCES:
         series = lines[source.key]
+        current_partial, current_note = _coverage(period, period_key, source.coverage_start)
+        prev_partial, prev_note = (
+            _coverage(period, prev_period, source.coverage_start) if prev_period else (False, None)
+        )
+        # 本期或上期覆盖不全，环比一律置 null：半周去重 / 首轮孤点都会造出假涨幅
+        delta_blocked = (
+            "coverage_partial"
+            if current_partial
+            else ("prev_coverage_partial" if prev_partial else None)
+        )
         kpis = [
-            _build_kpi(metric, source.key, series, period_key, all_periods, window, is_partial)
+            _build_kpi(
+                metric,
+                source.key,
+                series,
+                period_key,
+                all_periods,
+                window,
+                is_partial,
+                delta_blocked=delta_blocked,
+            )
             for metric in source.metrics
         ]
+        # 副指标：峰值小时并发款数（只在周报有概览表；不进主 KPI、不出环比）
+        if source.key == "online" and overview:
+            kpis.append(_build_concurrent_kpi(overview, period_key, all_periods, window))
         line_kpis[source.key] = kpis
+        if current_partial or prev_partial:
+            coverage_flags.append(
+                {
+                    "level": "medium",
+                    "item": f"{source.key}_partial_coverage",
+                    "label": f"{source.label}数据覆盖不全",
+                    "detail": current_note or prev_note,
+                    "action": (
+                        "本期与上期的环比一律置 null（deltaBlocked），"
+                        "趋势点保留原始值，但不代表完整周"
+                    ),
+                }
+            )
         updated = _iso_timestamp((series.get(period_key) or {}).get("updated_at"))
         line_payloads.append(
             {
@@ -877,6 +1123,7 @@ def report(
                 "periods": sorted(series),
                 "kpis": kpis,
                 "breakdown": breakdowns[source.key],
+                **(({"peakHour": peak_hour}) if (source.key == "online" and peak_hour) else {}),
             }
         )
 
@@ -925,6 +1172,7 @@ def report(
         "flags": _build_flags(period_key, lines, overview, breakdowns, line_kpis),
     }
     payload["meta"]["sources"] = [item for item in payload["meta"]["sources"] if item]
+    payload["flags"].extend(coverage_flags)
     if is_partial:
         payload["flags"].insert(
             0,
