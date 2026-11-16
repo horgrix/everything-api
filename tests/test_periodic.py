@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 PREFIX = "/api/v09/data/periodic"
 
 
@@ -305,9 +307,26 @@ def test_placeholder_ratio_exposed_for_online_breakdown(client):
     assert online["breakdown"]["items"][0]["placeholderRatio"] == 0.0
 
     peak = online["peakHour"]
-    assert peak["placeholderRatio"] == 0.42
+    assert peak["placeholderRatio"] == pytest.approx(0.5329)
     maker = next(item for item in peak["breakdown"] if item["distributionType"] == "2")
-    assert maker["placeholderRatio"] == 0.71
+    assert maker["placeholderRatio"] == pytest.approx(0.7143)
+
+    # 周期汇总的 dist 行分母是「期峰值」，不能推人数口径，所以不提供该字段
+    assert "placeholderPlayerRatio" not in dist1
+
+    # 行数口径 ≠ 人数口径：兜底行每条贡献 100 人，人数占比得单独算
+    # 与爬虫在真库上算的一致：dist_1 94 款 × 0.7872 = 74 行 → 7,400 / 8,526 = 86.79%
+    # 对比行数口径 78.72%，两者差 8 个百分点，就是「标错对象」的地方
+    peak_dist1 = next(
+        item for item in peak["breakdown"] if item["distributionType"] == "1"
+    )
+    assert peak_dist1["placeholderPlayerRatio"] == pytest.approx(0.8679, abs=1e-4)
+    # dist_0：440 × 0.4295 = 189 行 → 18,900 / 127,110 = 14.87%（行数口径 42.95%）
+    assert peak["breakdown"][0]["placeholderPlayerRatio"] == pytest.approx(
+        0.1487, abs=1e-3
+    )
+    # 整体取 ALL 行：653 × 0.5329 = 348 行 → 34,800 / 146,354 = 23.78%
+    assert peak["placeholderPlayerRatio"] == pytest.approx(0.2378, abs=1e-3)
 
     download = next(line for line in payload["lines"] if line["key"] == "download")
     assert download["breakdown"]["items"][0]["placeholderRatio"] is None

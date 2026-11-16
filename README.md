@@ -313,10 +313,23 @@ W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻
 （`gapPct=0.39` 是结构性结果，**不是数据质量问题，别标红**），下载/广告是 `true`。
 `peakHour.sumsMatch=false` 才是真告警（同小时快照都加不平 = 口径被动过）。
 
-**采集兜底值占比**：在线周期表的 `placeholder_ratio`（0~1，DWS 每天重算）会原样透出：
-`lines[online].breakdown.items[].placeholderRatio` 与 `peakHour.breakdown[].placeholderRatio`，
-`peakHour.placeholderRatio` 是整小时的口径（优先取 ALL 行）。上游没采到真值时会写 100，
-所以 **>0.5 建议 UI 标「含采集兜底值，占比仅作参考」**；其他业务线没有这个列，值为 `null`。
+**采集兜底值占比：两个口径，别混用**
+
+上游对低体量游戏返回哨兵值 100（不是我们填的默认值），所以「多少款含水」和「多少人含水」
+是两个数，可以差 3 倍（W46 商业游戏：行数 42.95% vs 人数 14.87%）。
+
+| 字段 | 分母 | 回答的问题 | 出现位置 |
+|------|------|-----------|----------|
+| `placeholderRatio` | **app-小时行数** | 这个分组里多少款游戏这一小时没拿到真值（数据质量） | `peakHour.breakdown[]`、`peakHour`、`lines[online].breakdown.items[]` |
+| `placeholderPlayerRatio` | **在线人数** | 这个分型的在线人数里哨兵值贡献了多少（「8,526 人里 86.8% 是兜底」用它） | 只在 `peakHour.breakdown[]` 与 `peakHour` |
+
+- 两者都是 0~1、保留 4 位小数；表里没有该列的线（下载/广告）为 `null`。
+- `placeholderPlayerRatio` 由 `round(placeholderRatio × gameCnt) × 100 / peakOnlinePlayers` 推导
+  （哨兵值恒为 100 人/行）。**只在 `dist_peak` 行成立**——周期汇总的 `dist` 分行母是「期峰值」，
+  分子是整期累加，不能这么推，所以那里不提供该字段。
+- 若将来 DWS 直接产出 `placeholder_player_ratio` 列，接口会改为读列，不再推导。
+- 阈值建议：`placeholderPlayerRatio > 0.5` 标「该分型人数含水，占比仅作参考」；
+  `placeholderRatio > 0.5` 标「该分型多数游戏无真值」（两者不要共用同一句话）。
 
 W45 的 `peakHour` 是 `2026-11-08 20`（576 款 / 125,697 人），不是概览表的 133,480：
 后者来自 11-07 20 点，那天的明细已被清理，不参与分型。

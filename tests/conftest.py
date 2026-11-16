@@ -213,16 +213,15 @@ def _seed() -> None:
             "SET placeholder_ratio = 0.79 "
             "WHERE category_type = 'dist' AND crawled_at = '2026-46' AND category_value = '1'"
         )
-        conn.execute(
-            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
-            "SET placeholder_ratio = 0.42 WHERE category_type = 'dist_peak'"
-        )
-        conn.execute(
-            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
-            "SET placeholder_ratio = 0.71 "
-            "WHERE category_type = 'dist_peak' AND crawled_at = '2026-46' "
-            "AND category_value = '2'"
-        )
+        # dist_peak 用 W46 真库的三个值：行数口径 0.4295 / 0.7872 / 0.7143，ALL 0.5329
+        for value, ratio in (("0", 0.4295), ("1", 0.7872), ("2", 0.7143), ("ALL", 0.5329)):
+            conn.execute(
+                "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+                "SET placeholder_ratio = ? "
+                "WHERE category_type = 'dist_peak' AND crawled_at = '2026-46' "
+                "AND category_value = ?",
+                (ratio, value),
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_ad_aggr_v6_periodic_report (

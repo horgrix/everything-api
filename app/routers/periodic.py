@@ -270,6 +270,14 @@ def _as_float(value: Any) -> float | None:
     return round(float(number), 2)
 
 
+def _as_ratio(value: Any) -> float | None:
+    """0~1 的占比保留 4 位小数（_as_float 是按「人数」设计的 2 位，会把 0.4295 压成 0.43）。"""
+    number = _as_number(value)
+    if number is None:
+        return None
+    return round(float(number), 4)
+
+
 def _ratio(cur: float | int | None, prev: float | int | None) -> float | None:
     """环比百分比（1 位小数）。缺值或上期为 0 时返回 None —— 不编造 -100%。"""
     if cur is None or prev is None:
@@ -661,6 +669,27 @@ def _build_concurrent_kpi(
     }
 
 
+def _placeholder_player_ratio(row: dict[str, Any]) -> float | None:
+    """兜底值在「人」上的占比（0~1）。
+
+    DWS 的 placeholder_ratio 分母是**行数**（app-小时），回答「多少款游戏这一小时没真值」；
+    UI 上那句「8,526 人里 86.8% 是兜底」用的是**人数**。两者可以差 3 倍
+    （W46 商业游戏：行数 43% vs 人数 15%），共用一句话会标错对象。
+
+    由同一行推导：兜底行数 = round(placeholder_ratio × game_cnt)，
+    每行贡献的在线人数恰好是哨兵值 100（上游对低体量游戏返回 100，不是我们填的），
+    所以 players_from_placeholder = 兜底行数 × 100，再除以该分型的 peak_online_players。
+    仅对 dist_peak 行成立（那是同一小时、人数可加）；周期汇总的 dist 行分母是峰值，不能这么算。
+    """
+    ratio = _as_ratio(row.get("placeholder_ratio"))
+    games = _as_int(row.get("game_cnt"))
+    players = _as_int(row.get("peak_online_players"))
+    if ratio is None or not games or not players:
+        return None
+    placeholder_rows = round(ratio * games)
+    return round(placeholder_rows * 100 / players, 4)
+
+
 def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
     """全局峰值那一小时的同小时分型快照，直接读周期表的 category_type='dist_peak'。
 
@@ -709,8 +738,10 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
                 "label": DIST_LABELS.get(dist, UNKNOWN_DIST),
                 "gameCnt": _as_int(row.get("game_cnt")),
                 "peakOnlinePlayers": _as_int(row.get("peak_online_players")),
-                # 采集兜底值占比，0~1；>0.5 建议 UI 标「含采集兜底值，占比仅作参考」
-                "placeholderRatio": _as_float(row.get("placeholder_ratio")),
+                # 行数口径：该分型里多少 app-小时没拿到真值（数据质量）
+                "placeholderRatio": _as_ratio(row.get("placeholder_ratio")),
+                # 人数口径：该分型在线人数里哨兵值贡献的占比（UI 说「这 8,526 人含水」用它）
+                "placeholderPlayerRatio": _placeholder_player_ratio(row),
             }
         )
     breakdown.sort(
@@ -747,8 +778,11 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
             all_peak = None
         sums_match = all_peak is None or sum_players == all_peak
 
+    overall_player_ratio = (
+        _placeholder_player_ratio(total_row) if total_row is not None else None
+    )
     if total_row is not None:
-        overall_ratio = _as_float(total_row.get("placeholder_ratio"))
+        overall_ratio = _as_ratio(total_row.get("placeholder_ratio"))
     else:
         known = [
             item["placeholderRatio"]
@@ -765,8 +799,10 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
         "sumPeakOnlinePlayers": sum_players,
         # 表内自洽校验：Σ三项 必须等于 ALL 行（或 all 行峰值），不平就是 DWS 写坏了
         "sumsMatch": sums_match,
-        # 该小时整体的兜底值占比：ALL 行有就用它，否则取各分型里最大的一项
+        # 行数口径：该小时整体有多少 app-小时没拿到真值（ALL 行优先，否则取各分型最大）
         "placeholderRatio": overall_ratio,
+        # 人数口径：该小时总在线里哨兵值贡献的占比（W46 = 23.78%）
+        "placeholderPlayerRatio": overall_player_ratio,
         "breakdown": breakdown,
     }
 
@@ -809,7 +845,7 @@ def _build_breakdown(
                 "games": _as_int((current.get(dist) or {}).get("games")),
                 "hasData": dist in current,
                 # 采集兜底值（上游没采到真值时写的 100）占比，0~1；>0.5 建议 UI 标「仅作参考」
-                "placeholderRatio": _as_float(
+                "placeholderRatio": _as_ratio(
                     (current.get(dist) or {}).get("placeholder_ratio")
                 ),
             }
