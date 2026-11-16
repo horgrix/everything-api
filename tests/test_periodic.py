@@ -422,7 +422,7 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
         "lowSample": True,
     }
 
-    # 中位数正好 8 = W45 dist_0 的真实情况：严格小于阈值，不能判低样本
+    # 中位数正好 8 但 max 20：两条阈值都不触发 → 正常榜（严格小于，边界不误伤）
     edge = client.get(
         f"{PREFIX}/rank",
         params={
@@ -435,6 +435,21 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
     ).json()["data"]
     assert edge["sample"]["medianRealHours"] == 8
     assert edge["sample"]["lowSample"] is False
+
+    # W45 dist_0 的真实形状：median 8 / max 8 —— 中位数不漏，靠「max < 10」兜住
+    thin = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-46",
+            "category": "loss",
+            "list_type": "dist_2",
+        },
+    ).json()["data"]
+    assert thin["sample"]["medianRealHours"] == 8
+    assert thin["sample"]["maxRealHours"] == 8
+    assert thin["sample"]["lowSample"] is True
 
     # 下载/广告榜没有这一列：字段为 null，sample 为 null
     download = client.get(

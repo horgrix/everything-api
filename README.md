@@ -231,9 +231,11 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
 - **在线榜的样本信号**：每行带 `realHours`（该游戏本周期有有效在线的小时数，下载/广告榜为 `null`），
   payload 带 `sample: {minRealHours, maxRealHours, medianRealHours, lowSample}`。
-  判定用**中位数严格小于 8 小时**（`LOW_SAMPLE_HOURS`）：W46 的 `dist_1` 中位数 4.5 → 低样本，
-  `dist_0` 中位数 84 → 正常；W45 的 `dist_0` 中位数正好 8.0，严格小于才让它不被误判
-  （W45 本身只有 11-08 一天数据，另有 `online_partial_coverage` 说明，别叠两条提示）。
+  判定为 **`medianRealHours < 8` 或 `maxRealHours < 10`**（满足任一即低样本）：
+  - 中位数 < 8：整榜一半以上的游戏不到 8 小时数据（W46 `dist_1` 中位数 4.5 → 低样本）；
+  - max < 10：连覆盖最好的游戏都不足 10 小时，说明整周采集本身很薄
+    （W45 `dist_0` 中位数正好 8.0、max 也只有 8 → 低样本）。
+  正常榜 W46 `dist_0`：中位数 84、max 84，两条都不触发。
   前端据此决定「标低样本」而不是自己猜数值分布（猜「全部相同」会把真故障一起藏掉）
 - PC 在线榜的维度参数是 **`list_type`（下划线）**；传 `listType` 会 400 并提示正确写法
   （FastAPI 会静默忽略拼错的 query 参数，那样只会拿到混合分组榜单而看不出来）
