@@ -226,6 +226,25 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
 - 结果在进程内缓存 60 秒（`CACHE_TTL_SECONDS`），报告一天只更新几次，重复请求不再打库
 
+`coreKpis` 的 6 个 key（顺序固定，前端直接按 key 取，不要再拼 SQL）：
+
+| key | 含义 | 单位 | 来源业务线 |
+|-----|------|------|------------|
+| `online_game_cnt` | 在线游戏数 | 款 | online |
+| `online_peak_players` | 在线峰值 | 人 | online |
+| `download_total` | 下载总量 | 次 | download |
+| `download_pc` | PC 下载量 | 次 | download |
+| `download_app` | APP 下载量 | 次 | download |
+| `ad_total` | 广告总曝光（`ad_views + pcebid_views`） | 次 | ad |
+
+每个 KPI 对象字段：`value` / `prevValue` / `prevPeriodKey` / `deltaAbs` / `deltaPct` /
+`direction` / `deltaComparable` / `trend[]` / `availablePeriods` / `historyPoints` /
+`insufficientHistory` / `hasValue` / `unit` / `isInt`；`meta` 里同样有整篇的
+`availablePeriods`、`insufficientHistory`、`isPartial`、`retiredColumns`。
+
+与 `report-metric-spec.json` 的对应关系：KPI key 完全一致；spec 里的 `qualityFlags`
+就是本接口顶层的 `flags`（同一组 `{level,item,label,detail,action}` 对象）。
+
 部署后一条命令验收（只读，失败时非 0 退出，可当发布门禁）：
 
 ```bash

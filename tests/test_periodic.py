@@ -39,7 +39,7 @@ def test_report_core_kpis_have_delta_and_trend(client):
     assert meta["isLatest"] is True
     assert [kpi["key"] for kpi in payload["coreKpis"]] == [
         "online_game_cnt",
-        "online_peak",
+        "online_peak_players",
         "download_total",
         "download_pc",
         "download_app",
@@ -61,7 +61,7 @@ def test_report_core_kpis_have_delta_and_trend(client):
     assert downloads["insufficientHistory"] is False
 
     # 在线只有两期：值本身可用，但必须标记历史不足
-    peak = _kpi(payload, "online_peak")
+    peak = _kpi(payload, "online_peak_players")
     assert peak["value"] == 146354
     assert peak["availablePeriods"] == ["2026-45", "2026-46"]
     assert peak["insufficientHistory"] is True

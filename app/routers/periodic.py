@@ -152,7 +152,7 @@ LINE_SOURCES: tuple[LineSource, ...] = (
         breakdown_column="peak_online_players",
         games_column="game_cnt",
         metrics=(
-            MetricSpec("online_peak", "peak_online_players", "在线峰值", "人"),
+            MetricSpec("online_peak_players", "peak_online_players", "在线峰值", "人"),
             MetricSpec("online_avg", "avg_online_players", "周均在线", "人", is_int=False),
             MetricSpec("online_game_cnt", "game_cnt", "在线游戏数", "款"),
         ),
@@ -870,7 +870,7 @@ def report(
     # 核心 KPI：按「每期都要看」的顺序拉平，附带 sparkline 点与可用期数
     core_keys = (
         "online_game_cnt",
-        "online_peak",
+        "online_peak_players",
         "download_total",
         "download_pc",
         "download_app",
