@@ -153,6 +153,7 @@ def _seed() -> None:
                 peak_online_players INTEGER NULL,
                 avg_online_players REAL NULL,
                 updated_at TEXT NULL,
+                sample_hours INTEGER NULL,
                 peak_hour TEXT NULL,
                 placeholder_ratio REAL NULL,
                 placeholder_player_ratio REAL NULL
@@ -187,6 +188,15 @@ def _seed() -> None:
                 ("weekly", "2026-46", "dist", "1", 151, 8633, 6613.48, None),
                 ("weekly", "2026-46", "dist", "2", 177, 11186, 8470.87, None),
             ],
+        )
+        # 覆盖采样点：W45 只有 11-08 的 8 个点（2 小时节奏），W46 满周 84
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET sample_hours = 8 WHERE crawled_at = '2026-45' AND category_type = 'all'"
+        )
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET sample_hours = 84 WHERE crawled_at = '2026-46' AND category_type = 'all'"
         )
         # dist_peak：同一小时的快照，三项在线之和恒等于 all 行（DWS 每天重算）
         conn.executemany(

@@ -229,6 +229,10 @@ def test_online_metric_decisions(client):
 
     flag_items = {flag["item"] for flag in payload["flags"]}
     assert "online_partial_coverage" in flag_items
+    # 覆盖用实测采样点算：W45 只有 8/84 个采样点（2 小时/次），不是写死的起始日
+    coverage = next(f for f in payload["flags"] if f["item"] == "online_partial_coverage")
+    assert "8/84" in coverage["detail"]
+    assert "84/84" not in coverage["detail"]
 
     # W45 自身也是半周：现场置 null，而不是拿更早的期硬凑一个环比
     older = _report(client, key="2026-45")["data"]

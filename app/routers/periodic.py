@@ -370,14 +370,42 @@ def _is_partial(period_type: str, key: str) -> bool:
     return date.fromisoformat(end) >= _today()
 
 
-def _coverage(
-    period_type: str, key: str, coverage_start: str | None
-) -> tuple[bool, str | None]:
-    """某一期的数据覆盖是否完整。
+# 采集节奏：每 2 小时一次 → 每天 12 个采样点；满周 84、满月 天数×12
+SAMPLES_PER_DAY = 12
+COVERAGE_MIN_RATIO = 0.9
 
-    业务线有「起始采集日」时，期起点早于它就是半期数据（如在线线 W45 只有 11-07~11-08），
-    这种期的环比不可比。返回 (是否覆盖不全, 人话说明)。
+
+def _expected_samples(period_type: str, key: str) -> int:
+    """该期按采集节奏应有多少个采样点（周 84 / 月 天数×12）。"""
+    start, end = _period_range(period_type, key)
+    days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+    return days * SAMPLES_PER_DAY
+
+
+def _coverage(
+    period_type: str,
+    key: str,
+    coverage_start: str | None,
+    sample_hours: int | None = None,
+) -> tuple[bool, str | None]:
+    """某一期的数据覆盖是否完整，返回 (是否覆盖不全, 人话说明)。
+
+    优先用表里实测的 `sample_hours`（该期 distinct 采样点数）算覆盖率：
+    采集每 2 小时一次，满周 84 个点，覆盖率 < 0.9 判不全。这样「某周采集停几天」
+    也会自动落到不全，不依赖写死的起始日。
+    表里没有该列时（老库）退回「起始采集日」判断，只用于历史期。
     """
+    if sample_hours is not None:
+        expected = _expected_samples(period_type, key)
+        if expected <= 0:
+            return False, None
+        ratio = sample_hours / expected
+        if ratio >= COVERAGE_MIN_RATIO:
+            return False, None
+        return True, (
+            f"{key} 只采集到 {sample_hours}/{expected} 个采样点"
+            f"（约 {ratio * 100:.0f}%，采集节奏 2 小时/次），覆盖不全"
+        )
     if not coverage_start:
         return False, None
     start, end = _period_range(period_type, key)
@@ -385,12 +413,13 @@ def _coverage(
         return False, None
     covered_from = max(start, coverage_start)
     covered_days = (date.fromisoformat(end) - date.fromisoformat(covered_from)).days + 1
-    total_days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
-    if covered_days >= total_days:
+    expected = _expected_samples(period_type, key)
+    covered_points = covered_days * SAMPLES_PER_DAY
+    if covered_days >= (expected // SAMPLES_PER_DAY):
         return False, None
     return True, (
-        f"在线数据自 {coverage_start} 起才开始采集，{key} 仅覆盖 "
-        f"{covered_from}~{end}（{covered_days}/{total_days} 天）"
+        f"在线数据自 {coverage_start} 起才开始采集，{key} 最多只有 {covered_days} 天窗口"
+        f"（≤ {covered_points}/{expected} 个采样点，采集节奏 2 小时/次），覆盖不全"
     )
 
 
@@ -457,6 +486,8 @@ def _load_line_rows(period_type: str) -> dict[str, dict[str, dict[str, Any]]]:
     result: dict[str, dict[str, dict[str, Any]]] = {}
     for source in LINE_SOURCES:
         columns = ", ".join(metric.column for metric in source.metrics)
+        if "sample_hours" in _columns_of(source.table):
+            columns += ", sample_hours"
         active = _active_filter(source.table)
         sql = f"""
             SELECT crawled_at, {columns}, updated_at
@@ -1255,9 +1286,21 @@ def report(
     coverage_notes: dict[str, str] = {}
     for source in LINE_SOURCES:
         series = lines[source.key]
-        current_partial, current_note = _coverage(period, period_key, source.coverage_start)
+        current_partial, current_note = _coverage(
+            period,
+            period_key,
+            source.coverage_start,
+            _as_int((series.get(period_key) or {}).get("sample_hours")),
+        )
         prev_partial, prev_note = (
-            _coverage(period, prev_period, source.coverage_start) if prev_period else (False, None)
+            _coverage(
+                period,
+                prev_period,
+                source.coverage_start,
+                _as_int((series.get(prev_period) or {}).get("sample_hours")),
+            )
+            if prev_period
+            else (False, None)
         )
         # 本期或上期覆盖不全，环比一律置 null：半周去重 / 首轮孤点都会造出假涨幅
         delta_blocked = (
@@ -1290,7 +1333,12 @@ def report(
                 {
                     "level": "medium",
                     "item": f"{source.key}_partial_coverage",
-                    "label": f"{source.label}数据覆盖不全",
+                    # 说清是「本期」还是「上期」：W46 的环比被置 null 是因为上期 W45 只有 8/84
+                    "label": (
+                        f"{source.label}本期覆盖不全"
+                        if current_partial
+                        else f"{source.label}上期覆盖不全"
+                    ),
                     "detail": current_note or prev_note,
                     "action": (
                         "本期与上期的环比一律置 null（deltaBlocked），"
