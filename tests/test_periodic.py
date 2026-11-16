@@ -382,3 +382,40 @@ def test_rank_reads_retired_dimension_history(client):
     ).json()
     assert default["code"] == 0
     assert default["data"]["items"] == []
+
+
+def test_rank_exposes_real_hours_and_sample_flag(client):
+    """real_hours 透出；全员有效小时 <= 2 时 lowSample=true（前端别再自己猜数值分布）。"""
+    normal = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-46",
+            "category": "top",
+            "list_type": "dist_0",
+        },
+    ).json()["data"]
+    assert normal["items"][0]["realHours"] == 20
+    assert normal["sample"] == {"minRealHours": 20, "maxRealHours": 20, "lowSample": False}
+
+    low = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-46",
+            "category": "loss",
+            "list_type": "dist_1",
+        },
+    ).json()["data"]
+    assert [item["realHours"] for item in low["items"]] == [2, 1]
+    assert low["sample"] == {"minRealHours": 1, "maxRealHours": 2, "lowSample": True}
+
+    # 下载/广告榜没有这一列：字段为 null，sample 为 null
+    download = client.get(
+        f"{PREFIX}/rank",
+        params={"line": "download", "period": "monthly", "category": "top"},
+    ).json()["data"]
+    assert download["items"][0]["realHours"] is None
+    assert download["sample"] is None

@@ -229,6 +229,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   `is_active` 是 `tinyint NOT NULL DEFAULT 1`，代码里用 `COALESCE(is_active,1)` 属防御性写法：
   DWS 下线残留行是「置 0 不删数据」，例如广告的 `(未分类)` 行，不过滤就会多出一个桶
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
+- **在线榜的样本信号**：每行带 `realHours`（该游戏本周期有有效在线的小时数，下载/广告榜为 `null`），
+  payload 带 `sample: {minRealHours, maxRealHours, lowSample}`。全员 `realHours <= 2` 时
+  `lowSample=true` —— 这一榜的均值只由 1~2 个有效小时撑着，名次是噪声，
+  前端据此决定「标低样本」而不是自己猜数值分布（猜「全部相同」会把真故障一起藏掉）
 - PC 在线榜的维度参数是 **`list_type`（下划线）**；传 `listType` 会 400 并提示正确写法
   （FastAPI 会静默忽略拼错的 query 参数，那样只会拿到混合分组榜单而看不出来）
 - **旧维度查历史周**：`list_type=pc_played / pc_emulator_played / app_hot_creative` 的行

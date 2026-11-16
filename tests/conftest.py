@@ -373,19 +373,25 @@ def _seed() -> None:
                 prev_avg_online_players REAL NULL,
                 diff_online_players REAL NULL,
                 updated_at TEXT NULL,
-                is_active INTEGER NULL
+                is_active INTEGER NULL,
+                real_hours INTEGER NULL
             )
             """
         )
         conn.executemany(
             "INSERT INTO dws_taptap_pc_online_peak_players_periodic_rank "
             "(period_type, crawled_at, rank_category, rank_no, app_id, app_name, "
-            " distribution_type, list_type, avg_online_players, is_active) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " distribution_type, list_type, avg_online_players, is_active, real_hours) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 # 旧维度只存在于历史周，且已被标记下线（必须仍能查到）
-                ("weekly", "2026-42", "top", 1, 111, "旧维度游戏", 0, "pc_played", 500.0, 0),
-                ("weekly", "2026-46", "top", 1, 222, "新维度游戏", 0, "dist_0", 900.0, 1),
+                ("weekly", "2026-42", "top", 1, 111, "旧维度游戏", 0, "pc_played",
+                 500.0, 0, 12),
+                ("weekly", "2026-46", "top", 1, 222, "新维度游戏", 0, "dist_0",
+                 900.0, 1, 20),
+                # 样本不足的一榜：dist_1 全员 real_hours 都 <= 2
+                ("weekly", "2026-46", "loss", 1, 333, "低样本甲", 1, "dist_1", 100.0, 1, 2),
+                ("weekly", "2026-46", "loss", 2, 444, "低样本乙", 1, "dist_1", 100.0, 1, 1),
             ],
         )
 

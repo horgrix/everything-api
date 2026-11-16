@@ -91,6 +91,8 @@ MAX_WINDOW = 24
 RANK_CATEGORIES = ("top", "gain", "loss")
 # 火炬之光单期环比超过这个倍数就按「疑似口径切换」告警
 SUSPECT_JUMP_RATIO = 3.0
+# 榜单「没样本」阈值：该榜所有游戏的 real_hours 都不超过这个小时数，名次没有可比性
+LOW_SAMPLE_HOURS = 2
 # 概览表与在线周期表的容差（相对差）
 OVERVIEW_TOLERANCE = 0.01
 
@@ -1422,11 +1424,16 @@ def rank(
         if dist:
             filters.append(f"distribution_type = {int(dist)}")
 
+        # real_hours：该游戏本周期「有有效在线小时」的数量（只有 PC 在线榜有）；
+        # 用来判断这个榜有没有可比性（样本太少时名次本身就是噪声），前端不必猜数值分布
+        hours_column = (
+            "real_hours" if "real_hours" in _columns_of(source.table) else "NULL"
+        )
         sql = f"""
             SELECT rank_no, app_id, app_name, {source.icon} AS icon, distribution_type,
                    tag_1, tag_2, {source.value} AS value,
                    {source.prev} AS prev_value, {source.diff} AS diff_value,
-                   updated_at
+                   {hours_column} AS real_hours, updated_at
               FROM {source.table}
              WHERE {' AND '.join(filters)}
              ORDER BY rank_no
@@ -1460,8 +1467,22 @@ def rank(
                 "prevValue": _as_int(prev_value) if source.unit != "人" else _as_float(prev_value),
                 "diff": _as_int(diff_value) if source.unit != "人" else _as_float(diff_value),
                 "diffPct": _ratio(value, prev_value),
+                # 有有效在线小时数（下载/广告榜没有这个列 → null）
+                "realHours": _as_int(row.get("real_hours")),
             }
         )
+
+    # 样本是否足够：全员 real_hours 都 <= 2 视为没样本（阈值写死在这里，前端不要各自判）
+    hours = [item["realHours"] for item in items if item["realHours"] is not None]
+    sample = (
+        {
+            "minRealHours": min(hours),
+            "maxRealHours": max(hours),
+            "lowSample": max(hours) <= LOW_SAMPLE_HOURS,
+        }
+        if hours
+        else None
+    )
 
     return _cache_set(
         cache_key,
@@ -1477,6 +1498,7 @@ def rank(
                 "retiredDimension": line == "online" and list_type in RETIRED_LIST_TYPES,
                 "unit": source.unit,
                 "availableRows": len(items),
+                "sample": sample,
                 "items": items[:limit],
             },
             total=len(items),
