@@ -454,6 +454,22 @@ def _coverage_info(
     }
 
 
+def _coverage_level(info: dict[str, Any], is_current: bool) -> str:
+    """覆盖 flag 的严重级别。
+
+    只有「窗口已经稳定存在、期内却采少了」才算告警（medium）。
+    - 上期的问题：只解释「本期为什么没有环比」，info；
+    - 本期首日就是源起点（W45 / 2026-11）：缺的那几个点是源头刚起时的启动问题，
+      补不回来，info（仍然显示 67%，但不占告警位）；
+    - 窗口起点在源起点之后、期内却缺采：真故障，medium。
+    """
+    if not is_current:
+        return "info"
+    if info["gap"] and not info["sourceStartsLate"]:
+        return "medium"
+    return "info"
+
+
 def _coverage_note(info: dict[str, Any], key: str) -> str | None:
     """覆盖情况的人话说明（给 flag 的 detail 用）。"""
     sample = info.get("sampleHours")
@@ -1438,8 +1454,8 @@ def report(
             is_current = flagged is current
             coverage_flags.append(
                 {
-                    # 上一期的问题只解释「本期为什么没有环比」，不是本期的告警
-                    "level": "medium" if is_current else "info",
+                    # 级别见 _coverage_level：首日启动造成的缺失不占告警位
+                    "level": _coverage_level(flagged, is_current),
                     "item": f"{source.key}_partial_coverage",
                     # scope + relatedPeriod 钉死这条 flag 讲的是哪一期：
                     # W46 的响应里会带一条讲 W45 的 flag，没有这两个字段时

@@ -251,8 +251,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   窗口末端取期末（进行中的期取昨天）而不是「末采样日」：否则采集中途挂掉时窗口会跟着缩短，
   反而算出 100% 假绿。进行中的期 `windowEndFinal=false`：昨天的数据要等每天 00:05 的同步任务
   落库，同步延迟时这一格会短暂偏小，巡检对它只打印不判失败。
-  `reason=collection_gap` 指「采集窗口内少采了」——首日启动晚（W45 缺 00/02/04/06）和中途
-  停采都算这一类，都是可修的；「源本来就没有」不在这条里，它走 `sourceStartsLate`。
+  `reason=collection_gap` 指「采集窗口内少采了」；「源本来就没有」不在这条里，它走 `sourceStartsLate`。
+  **级别**：只有「窗口起点在源起点之后、期内却采少了」才是 `medium`（真故障）；
+  首日就是源起点（W45 缺 00/02/04/06、2026-11）的缺失属于启动问题、补不回来，降为 `info`，
+  数据（`ratio=0.667`）照样给全，只是不占告警位；上期的问题永远是 `info`。
 
   覆盖类 flag 都带 `scope`（`current` / `previous`）与 `relatedPeriod`，钉死它讲的是哪一期：
   查 W46 时会附一条讲 W45 的 flag（解释「为什么本期没有环比」），`scope=previous` 时 `level`

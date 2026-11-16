@@ -249,9 +249,10 @@ def test_online_metric_decisions(client):
     source = next(f for f in older["flags"] if f["item"] == "online_source_start")
     assert source["level"] == "info"
     assert source["scope"] == "current" and source["relatedPeriod"] == "2026-45"
-    # W45 自己那期：窗口内真缺采 → medium + scope=current
+    # W45 自己那期：窗口内确缺 4 个点，但那 4 个点是源刚启动时的 00-06，
+    # 属于「首日启动」不可修，级别 info（仍显示 67%，不占告警位）
     own = next(f for f in older["flags"] if f["item"] == "online_partial_coverage")
-    assert own["level"] == "medium" and own["scope"] == "current"
+    assert own["level"] == "info" and own["scope"] == "current"
     assert own["relatedPeriod"] == "2026-45"
     assert "2026-11-08" in source["detail"]
     assert older_online["coverage"]["sourceStartsLate"] is True
@@ -547,3 +548,21 @@ def test_coverage_info_three_signals(client):
     # sample_hours 缺失（老库）时不编造比例
     unknown = _coverage_info("weekly", "2026-46", None, "2026-11-08")
     assert unknown["ratio"] is None and unknown["gap"] is False
+
+
+def test_coverage_level_only_alarms_inside_established_window(client):
+    """告警级别：只有「窗口起点在源起点之后、期内却采少了」才是 medium。"""
+    from app.routers.periodic import _coverage_info, _coverage_level
+
+    # W46 假设只采到 60/84：窗口起点 = 期初（源早已存在）→ 真故障，medium
+    broken = _coverage_info("weekly", "2026-46", 60, "2026-11-08")
+    assert broken["gap"] is True and broken["sourceStartsLate"] is False
+    assert _coverage_level(broken, is_current=True) == "medium"
+
+    # W45：缺的是源刚启动那几个点（不可修）→ info
+    startup = _coverage_info("weekly", "2026-45", 8, "2026-11-08")
+    assert startup["gap"] is True and startup["sourceStartsLate"] is True
+    assert _coverage_level(startup, is_current=True) == "info"
+
+    # 上期的问题永不占告警位
+    assert _coverage_level(broken, is_current=False) == "info"
