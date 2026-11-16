@@ -327,16 +327,17 @@ W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻
 | `peakHour.placeholderRatio` / `peakHour.breakdown[].placeholderRatio` | app-小时行数 | **峰值那一小时** | 这一小时里多少款游戏没拿到真值 |
 | `lines[online].breakdown.items[].placeholderRatio` | app-小时行数 | **整个周期** | 这一周里该分型多少比例的采集行为哨兵值 |
 | `peakHour.placeholderPlayerRatio` / `peakHour.breakdown[].placeholderPlayerRatio` | 在线人数 | **峰值那一小时** | 这一小时的在线人数里哨兵值贡献了多少 |
+| `lines[online].breakdown.items[].placeholderPlayerRatio` | 在线人数 | **整个周期** | 这一周该分型的在线人数里哨兵值贡献了多少 |
 
 注意前两行的**分母口径相同但窗口不同**（W46 实测 0.43 vs 0.34），不是数据打架，
 也不要去对账。字段名与 DWS 表列 `placeholder_ratio` 保持一致，名字里的「ratio」不自带单位，
 所以「这是款数口径」只在本文档定义一次。
 
 - 两者都是 0~1、保留 4 位小数；表里没有该列的线（下载/广告）为 `null`。
-- `placeholderPlayerRatio` 由 `round(placeholderRatio × gameCnt) × 100 / peakOnlinePlayers` 推导
-  （哨兵值恒为 100 人/行）。**只在 `dist_peak` 行成立**——周期汇总的 `dist` 分行母是「期峰值」，
-  分子是整期累加，不能这么推，所以那里不提供该字段。
-- 若将来 DWS 直接产出 `placeholder_player_ratio` 列，接口会改为读列，不再推导。
+- `placeholderPlayerRatio` **直接读 DWS 的 `placeholder_player_ratio` 列**（峰值小时与整期各有自己的值，
+  所以两个位置的数字不同是正常的：W46 dist_1 = 峰值小时 86.79% vs 整期 74%）。
+- 只有老库还没有这一列时，才回退到 `round(placeholderRatio × gameCnt) × 100 / peakOnlinePlayers` 推导；
+  该推导依赖「哨兵值恒为 100 且每行计 1 人」，**只对 `dist_peak` 行成立**，整期汇总行不会走推导（返回 `null`）。
 - 阈值建议：`placeholderPlayerRatio > 0.5` 标「该分型人数含水，占比仅作参考」；
   `placeholderRatio > 0.5` 标「该分型多数游戏无真值」（两者不要共用同一句话）。
 

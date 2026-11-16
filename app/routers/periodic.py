@@ -505,11 +505,15 @@ def _load_breakdown(
         return {}
     quoted = ", ".join(f"'{key}'" for key in keys)
     # placeholder_ratio 只有在线报表有（采集兜底值占比），其他线自动跳过
-    ratio = "placeholder_ratio" if "placeholder_ratio" in _columns_of(source.table) else "NULL"
+    columns = _columns_of(source.table)
+    ratio = "placeholder_ratio" if "placeholder_ratio" in columns else "NULL"
+    player_ratio = (
+        "placeholder_player_ratio" if "placeholder_player_ratio" in columns else "NULL"
+    )
     sql = f"""
         SELECT crawled_at, category_value AS dist,
                {source.breakdown_column} AS value, {source.games_column} AS games,
-               {ratio} AS placeholder_ratio
+               {ratio} AS placeholder_ratio, {player_ratio} AS placeholder_player_ratio
           FROM {source.table}
          WHERE period_type = '{period_type}' AND category_type = 'dist'
            AND crawled_at IN ({quoted}){_active_filter(source.table)}
@@ -672,7 +676,7 @@ def _build_concurrent_kpi(
 
 
 def _placeholder_player_ratio(row: dict[str, Any]) -> float | None:
-    """兜底值在「人」上的占比（0~1）。
+    """兜底值在「人」上的占比（0~1）。优先读 DWS 的 placeholder_player_ratio 列。
 
     DWS 的 placeholder_ratio 分母是**行数**（app-小时），回答「多少款游戏这一小时没真值」；
     UI 上那句「8,526 人里 86.8% 是兜底」用的是**人数**。两者可以差 3 倍
@@ -683,6 +687,9 @@ def _placeholder_player_ratio(row: dict[str, Any]) -> float | None:
     所以 players_from_placeholder = 兜底行数 × 100，再除以该分型的 peak_online_players。
     仅对 dist_peak 行成立（那是同一小时、人数可加）；周期汇总的 dist 行分母是峰值，不能这么算。
     """
+    provided = _as_ratio(row.get("placeholder_player_ratio"))
+    if provided is not None:
+        return provided
     ratio = _as_ratio(row.get("placeholder_ratio"))
     games = _as_int(row.get("game_cnt"))
     players = _as_int(row.get("peak_online_players"))
@@ -706,12 +713,15 @@ def _load_peak_hour(period_type: str, period_key: str) -> dict[str, Any] | None:
     """
     table = ONLINE_TABLE
     # placeholder_ratio：该行里「采集兜底值」的占比（上游没采到真值时写 100），新库才有
-    ratio_column = (
-        "MAX(placeholder_ratio)" if "placeholder_ratio" in _columns_of(table) else "NULL"
+    columns = _columns_of(table)
+    ratio_column = "MAX(placeholder_ratio)" if "placeholder_ratio" in columns else "NULL"
+    player_ratio_column = (
+        "MAX(placeholder_player_ratio)" if "placeholder_player_ratio" in columns else "NULL"
     )
     sql = f"""
         SELECT category_value AS dist, game_cnt, peak_online_players,
-               MAX(peak_hour) AS peak_hour, {ratio_column} AS placeholder_ratio
+               MAX(peak_hour) AS peak_hour, {ratio_column} AS placeholder_ratio,
+               {player_ratio_column} AS placeholder_player_ratio
           FROM {table}
          WHERE period_type = '{period_type}' AND crawled_at = '{period_key}'
            AND category_type = 'dist_peak'{_active_filter(table)}
@@ -862,6 +872,11 @@ def _build_breakdown(
                 # 采集兜底值（上游没采到真值时写的 100）占比，0~1；>0.5 建议 UI 标「仅作参考」
                 "placeholderRatio": _as_ratio(
                     (current.get(dist) or {}).get("placeholder_ratio")
+                ),
+                # 人数口径（整期）；DWS 新列没产出时为 null —— 整期的分母是「期在线合计」，
+                # 不能用峰值小时的推导公式硬算
+                "placeholderPlayerRatio": _as_ratio(
+                    (current.get(dist) or {}).get("placeholder_player_ratio")
                 ),
             }
         )

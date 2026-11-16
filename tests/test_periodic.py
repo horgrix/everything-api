@@ -277,8 +277,8 @@ def test_peak_hour_reads_dist_peak_and_breakdown_marks_summable(client):
     assert older_peak["crawledAt"] == "2026-11-08 20"
     assert older_peak["sumPeakOnlinePlayers"] == 125697
     assert older_peak["sumsMatch"] is True
-    # W45 没有 ALL 行：人数口径按各分型的人数贡献求和再除总人数
-    # (177+38+49)*100 = 26,400 / 125,697 = 0.2100
+    # W45 没有 ALL 行、且没有 placeholder_player_ratio 列值：
+    # 人数口径回退到「按分型贡献求和 / 总人数」= (177+38+49)*100/125,697 = 0.2100
     assert older_peak["placeholderPlayerRatio"] == pytest.approx(0.21, abs=5e-3)
 
 
@@ -305,30 +305,30 @@ def test_placeholder_ratio_exposed_for_online_breakdown(client):
     payload = _report(client)["data"]
     online = next(line for line in payload["lines"] if line["key"] == "online")
 
+    # 整期（dist 行）：W46 真库条数口径 0.5943 / 人数口径 0.74
     dist1 = next(item for item in online["breakdown"]["items"] if item["key"] == "1")
-    assert dist1["placeholderRatio"] == 0.79
-    assert online["breakdown"]["items"][0]["placeholderRatio"] == 0.0
+    assert dist1["placeholderRatio"] == pytest.approx(0.5943)
+    assert dist1["placeholderPlayerRatio"] == pytest.approx(0.74)
+    assert online["breakdown"]["items"][0]["placeholderRatio"] == pytest.approx(0.3404)
 
     peak = online["peakHour"]
     assert peak["placeholderRatio"] == pytest.approx(0.5329)
     maker = next(item for item in peak["breakdown"] if item["distributionType"] == "2")
     assert maker["placeholderRatio"] == pytest.approx(0.7143)
 
-    # 周期汇总的 dist 行分母是「期峰值」，不能推人数口径，所以不提供该字段
-    assert "placeholderPlayerRatio" not in dist1
+    # 人数口径直接读 DWS 的 placeholder_player_ratio 列（不是峰值小时那套推导）
 
-    # 行数口径 ≠ 人数口径：兜底行每条贡献 100 人，人数占比得单独算
-    # 与爬虫在真库上算的一致：dist_1 94 款 × 0.7872 = 74 行 → 7,400 / 8,526 = 86.79%
-    # 对比行数口径 78.72%，两者差 8 个百分点，就是「标错对象」的地方
+    # 行数口径 ≠ 人数口径：峰值小时 dist_1 条数 78.72%，人数 86.79%
+    # 人数口径优先读列；W46 夹具这两列都来自真库，所以断言列值
     peak_dist1 = next(
         item for item in peak["breakdown"] if item["distributionType"] == "1"
     )
     assert peak_dist1["placeholderPlayerRatio"] == pytest.approx(0.8679, abs=1e-4)
-    # dist_0：440 × 0.4295 = 189 行 → 18,900 / 127,110 = 14.87%（行数口径 42.95%）
+    # dist_0：人数口径 14.87%（行数口径 42.95%）
     assert peak["breakdown"][0]["placeholderPlayerRatio"] == pytest.approx(
         0.1487, abs=1e-3
     )
-    # 整体取 ALL 行：653 × 0.5329 = 348 行 → 34,800 / 146,354 = 23.78%
+    # 整体取 ALL 行：人数口径 23.78%（行数口径 53.29%）
     assert peak["placeholderPlayerRatio"] == pytest.approx(0.2378, abs=1e-3)
 
     download = next(line for line in payload["lines"] if line["key"] == "download")

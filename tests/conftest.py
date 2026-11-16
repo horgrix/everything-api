@@ -154,7 +154,8 @@ def _seed() -> None:
                 avg_online_players REAL NULL,
                 updated_at TEXT NULL,
                 peak_hour TEXT NULL,
-                placeholder_ratio REAL NULL
+                placeholder_ratio REAL NULL,
+                placeholder_player_ratio REAL NULL
             )
             """
         )
@@ -208,11 +209,19 @@ def _seed() -> None:
             "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
             "SET placeholder_ratio = 0.0 WHERE category_type IN ('all', 'dist')"
         )
-        conn.execute(
-            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
-            "SET placeholder_ratio = 0.79 "
-            "WHERE category_type = 'dist' AND crawled_at = '2026-46' AND category_value = '1'"
-        )
+        # dist 行：W46 条数口径 0.3404/0.5943/0.5761、人数口径 0.2122/0.74/0.7179（真库值）
+        for value, ratio, player_ratio in (
+            ("0", 0.3404, 0.2122),
+            ("1", 0.5943, 0.74),
+            ("2", 0.5761, 0.7179),
+        ):
+            conn.execute(
+                "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+                "SET placeholder_ratio = ?, placeholder_player_ratio = ? "
+                "WHERE category_type = 'dist' AND crawled_at = '2026-46' "
+                "AND category_value = ?",
+                (ratio, player_ratio, value),
+            )
         # W45 没有 ALL 行（模拟新周期首日还没重算），只有分型行带占位占比
         for value, ratio in (("0", 0.4), ("1", 0.6), ("2", 0.7)):
             conn.execute(
@@ -223,13 +232,18 @@ def _seed() -> None:
                 (ratio, value),
             )
         # dist_peak 用 W46 真库的三个值：行数口径 0.4295 / 0.7872 / 0.7143，ALL 0.5329
-        for value, ratio in (("0", 0.4295), ("1", 0.7872), ("2", 0.7143), ("ALL", 0.5329)):
+        for value, ratio, player_ratio in (
+            ("0", 0.4295, 0.1487),
+            ("1", 0.7872, 0.8679),
+            ("2", 0.7143, 0.7931),
+            ("ALL", 0.5329, 0.2378),
+        ):
             conn.execute(
                 "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
-                "SET placeholder_ratio = ? "
+                "SET placeholder_ratio = ?, placeholder_player_ratio = ? "
                 "WHERE category_type = 'dist_peak' AND crawled_at = '2026-46' "
                 "AND category_value = ?",
-                (ratio, value),
+                (ratio, player_ratio, value),
             )
         conn.execute(
             """
