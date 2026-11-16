@@ -376,10 +376,17 @@ COVERAGE_MIN_RATIO = 0.9
 
 
 def _expected_samples(period_type: str, key: str) -> int:
-    """该期按采集节奏应有多少个采样点（周 84 / 月 天数×12）。"""
+    """该期按采集节奏应有多少个采样点（每天 12 个）。
+
+    分母用**已过天数**，不是整期天数：月报 2026-11 在 11-16 时只该要求 16 天 × 12 = 192，
+    用整月 30 天会把「还没到」误算成「没采到」。周报历史期不受影响（已结束 = 整周）。
+    """
     start, end = _period_range(period_type, key)
-    days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
-    return days * SAMPLES_PER_DAY
+    start_day = date.fromisoformat(start)
+    last_day = min(date.fromisoformat(end), _today())
+    if last_day < start_day:
+        return 0
+    return ((last_day - start_day).days + 1) * SAMPLES_PER_DAY
 
 
 def _coverage(

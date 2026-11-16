@@ -463,3 +463,22 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
     ).json()["data"]
     assert download["items"][0]["realHours"] is None
     assert download["sample"] is None
+
+
+def test_expected_samples_uses_elapsed_days_for_running_month(client):
+    """月报分母用「已过天数」：整月 30 天会把还没到的日子算成覆盖缺失。"""
+    from datetime import date
+
+    from app.routers.periodic import SAMPLES_PER_DAY, _expected_samples, _today
+
+    # 已结束的周：整周 7 天 × 12
+    assert _expected_samples("weekly", "2026-45") == 84
+    assert _expected_samples("weekly", "2026-46") == 84
+
+    # 进行中的月：按已过天数，最多整月天数
+    elapsed = min(date(2026, 11, 30), _today())
+    if elapsed >= date(2026, 11, 1):
+        days = (elapsed - date(2026, 11, 1)).days + 1
+        expected = _expected_samples("monthly", "2026-11")
+        assert expected == days * SAMPLES_PER_DAY
+        assert expected <= 30 * SAMPLES_PER_DAY
