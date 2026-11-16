@@ -91,8 +91,10 @@ MAX_WINDOW = 24
 RANK_CATEGORIES = ("top", "gain", "loss")
 # 火炬之光单期环比超过这个倍数就按「疑似口径切换」告警
 SUSPECT_JUMP_RATIO = 3.0
-# 榜单「没样本」阈值：该榜所有游戏的 real_hours 都不超过这个小时数，名次没有可比性
-LOW_SAMPLE_HOURS = 2
+# 榜单「没样本」阈值：该榜 real_hours 的**中位数**严格小于这个小时数即判低样本。
+# 用中位数而不是「全员 <= 2」：前者对整榜偏薄敏感（W46 dist_1 中位数 4.5），
+# 后者在真实数据上几乎不会触发。用严格小于：W45 dist_0 中位数正好 8.0，是正常大流量榜
+LOW_SAMPLE_HOURS = 8
 # 概览表与在线周期表的容差（相对差）
 OVERVIEW_TOLERANCE = 0.01
 
@@ -1488,16 +1490,18 @@ def rank(
         )
 
     # 样本是否足够：全员 real_hours 都 <= 2 视为没样本（阈值写死在这里，前端不要各自判）
-    hours = [item["realHours"] for item in items if item["realHours"] is not None]
-    sample = (
-        {
-            "minRealHours": min(hours),
-            "maxRealHours": max(hours),
-            "lowSample": max(hours) <= LOW_SAMPLE_HOURS,
+    hours = sorted(item["realHours"] for item in items if item["realHours"] is not None)
+    sample = None
+    if hours:
+        mid = len(hours) // 2
+        median = hours[mid] if len(hours) % 2 else (hours[mid - 1] + hours[mid]) / 2
+        sample = {
+            "minRealHours": hours[0],
+            "maxRealHours": hours[-1],
+            "medianRealHours": median,
+            # 中位数严格小于阈值才算低样本：W45 dist_0 的中位数正好是 8，是正常榜
+            "lowSample": median < LOW_SAMPLE_HOURS,
         }
-        if hours
-        else None
-    )
 
     return _cache_set(
         cache_key,

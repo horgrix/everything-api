@@ -397,7 +397,12 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
         },
     ).json()["data"]
     assert normal["items"][0]["realHours"] == 20
-    assert normal["sample"] == {"minRealHours": 20, "maxRealHours": 20, "lowSample": False}
+    assert normal["sample"] == {
+        "minRealHours": 20,
+        "maxRealHours": 20,
+        "medianRealHours": 20,
+        "lowSample": False,
+    }
 
     low = client.get(
         f"{PREFIX}/rank",
@@ -410,7 +415,26 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
         },
     ).json()["data"]
     assert [item["realHours"] for item in low["items"]] == [2, 1]
-    assert low["sample"] == {"minRealHours": 1, "maxRealHours": 2, "lowSample": True}
+    assert low["sample"] == {
+        "minRealHours": 1,
+        "maxRealHours": 2,
+        "medianRealHours": 1.5,
+        "lowSample": True,
+    }
+
+    # 中位数正好 8 = W45 dist_0 的真实情况：严格小于阈值，不能判低样本
+    edge = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-46",
+            "category": "gain",
+            "list_type": "dist_0",
+        },
+    ).json()["data"]
+    assert edge["sample"]["medianRealHours"] == 8
+    assert edge["sample"]["lowSample"] is False
 
     # 下载/广告榜没有这一列：字段为 null，sample 为 null
     download = client.get(
