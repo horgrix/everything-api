@@ -376,10 +376,10 @@ COVERAGE_MIN_RATIO = 0.9
 
 
 def _expected_samples(period_type: str, key: str) -> int:
-    """该期按采集节奏应有多少个采样点（每天 12 个）。
+    """该期按采集节奏应有多少个采样点（分母用**已过天数**）。
 
-    分母用**已过天数**，不是整期天数：月报 2026-11 在 11-16 时只该要求 16 天 × 12 = 192，
-    用整月 30 天会把「还没到」误算成「没采到」。周报历史期不受影响（已结束 = 整周）。
+    月报 2026-11 在 11-16 时只该要求 16 天 × 12 = 192，用整月 30 天会把
+    「还没到」误算成「没采到」。这个数只作「期口径」参考，不参与告警判定。
     """
     start, end = _period_range(period_type, key)
     start_day = date.fromisoformat(start)
@@ -389,87 +389,100 @@ def _expected_samples(period_type: str, key: str) -> int:
     return ((last_day - start_day).days + 1) * SAMPLES_PER_DAY
 
 
-def _source_window_samples(
-    period_type: str, key: str, coverage_start: str | None
-) -> int | None:
-    """源数据存在的那段窗口里，按采集节奏应有多少个采样点。
+def _coverage_info(
+    period_type: str,
+    key: str,
+    sample_hours: int | None,
+    coverage_start: str | None = None,
+) -> dict[str, Any]:
+    """把「覆盖」拆成三个互不冒充的信号。
 
-    用于回答「采集本身正常吗」：已结束的期取源起点到期末；进行中的期只算到昨天
-    （今天还没采完）。2026-11 在 11-16 时 = 11-08~11-15 共 8 天 × 12 = 96。
+    1. 窗口内完整性 ratio —— 采集窗口（源起点~期末，未结束的期只到昨天）里
+       实采 / 应采。**只有它参与告警**：窗口内缺采才是可修的采集故障。
+    2. sourceStart / sourceStartsLate —— 在线数据从哪天开始有。期初更早的那几天
+       「本来就没有源数据」，是事实说明，不是故障。
+    3. 新鲜度（是否还在采）由 `meta.updatedAt` + 巡检判断，不在这里算。
+
+    用「末采样日」当窗口末端会藏掉「采集中途挂掉」：W45 只要 11-08 那天采满
+    就是 12/12 = 100% 绿。所以已结束的期窗口取到期末，进行中的期只算到昨天。
     """
-    if not coverage_start:
-        return None
     start, end = _period_range(period_type, key)
     start_day = date.fromisoformat(start)
     end_day = date.fromisoformat(end)
-    window_start = max(start_day, date.fromisoformat(coverage_start))
-    if end_day >= _today():  # 进行中：今天的数据不完整，窗口只算到昨天
-        end_day = _today() - timedelta(days=1)
-    if end_day < window_start:
-        return None
-    return ((end_day - window_start).days + 1) * SAMPLES_PER_DAY
+    today = _today()
+    in_progress = end_day >= today
+    window_end = today - timedelta(days=1) if in_progress else end_day
+    source_start = date.fromisoformat(coverage_start) if coverage_start else None
+    window_start = max(start_day, source_start) if source_start else start_day
+    source_starts_late = bool(source_start and start_day < source_start)
 
-
-def _coverage(
-    period_type: str,
-    key: str,
-    coverage_start: str | None,
-    sample_hours: int | None = None,
-) -> tuple[bool, str | None, str | None]:
-    """某一期的数据覆盖是否完整，返回 (是否覆盖不全, 人话说明)。
-
-    优先用表里实测的 `sample_hours`（该期 distinct 采样点数）算覆盖率：
-    采集每 2 小时一次，满周 84 个点，覆盖率 < 0.9 判不全。这样「某周采集停几天」
-    也会自动落到不全，不依赖写死的起始日。
-    表里没有该列时（老库）退回「起始采集日」判断，只用于历史期。
-
-    返回 (是否覆盖不全, 说明, 原因)。原因是两种情况，处理方式不同：
-      · source_start —— 该期起点早于在线数据起点，那几天**没有源数据**，补不回来
-        （2026-11 的 11-01~11-07、W45 的 11-02~11-07）；
-      · collection_gap —— 期内在源数据可用范围内却采少了，属于可修的采集缺失。
-    """
-    start, _end = _period_range(period_type, key)
-    reason = (
-        "source_start"
-        if coverage_start and start < coverage_start
-        else "collection_gap"
+    expected = (
+        ((window_end - window_start).days + 1) * SAMPLES_PER_DAY
+        if window_end >= window_start
+        else 0
     )
+    period_expected = _expected_samples(period_type, key)
+    ratio = sample_hours / expected if (sample_hours is not None and expected) else None
+    period_ratio = (
+        sample_hours / period_expected
+        if (sample_hours is not None and period_expected)
+        else None
+    )
+    # gap = 窗口内真的采少了（可修，要告警）；
+    # sourceStartsLate 只阻断环比，不告警
+    gap = ratio is not None and ratio < COVERAGE_MIN_RATIO
 
-    if sample_hours is not None:
-        expected = _expected_samples(period_type, key)
-        if expected <= 0:
-            return False, None, None
-        ratio = sample_hours / expected
-        if ratio >= COVERAGE_MIN_RATIO:
-            return False, None, None
-        note = (
-            f"{key} 只采集到 {sample_hours}/{expected} 个采样点"
-            f"（约 {ratio * 100:.0f}%，采集节奏 2 小时/次）"
+    return {
+        "sampleHours": sample_hours,
+        "windowStart": window_start.isoformat(),
+        "windowEnd": window_end.isoformat(),
+        "expectedSamples": expected,
+        # 窗口内完整性：唯一参与告警的指标
+        "ratio": round(ratio, 4) if ratio is not None else None,
+        "gap": gap,
+        # 期口径：含「期初无源」的那几天，只作参考，不告警（否则永远红）
+        "periodExpectedSamples": period_expected,
+        "periodRatio": round(period_ratio, 4) if period_ratio is not None else None,
+        # 源起点：期初到源起点之间本来就没有数据
+        "sourceStart": coverage_start,
+        "sourceStartsLate": source_starts_late,
+        # 环比是否可比：窗口缺采 或 期初无源，都不该拿来做环比基数
+        "partial": gap or source_starts_late,
+    }
+
+
+def _coverage_note(info: dict[str, Any], key: str) -> str | None:
+    """覆盖情况的人话说明（给 flag 的 detail 用）。"""
+    sample = info.get("sampleHours")
+    if sample is None:
+        if info["sourceStartsLate"]:
+            return (
+                f"在线数据自 {info['sourceStart']} 起才有，{key} 期初几天本就无源数据"
+                "（属事实，不是采集故障）"
+            )
+        return None
+    ratio = info.get("ratio")
+    window = f"{info['windowStart']}~{info['windowEnd']}"
+    if ratio is None:
+        return f"{key} 采集窗口 {window} 尚未产生采样点"
+    pct = ratio * 100
+    note = (
+        f"{key} 采集窗口 {window} 内 {sample}/{info['expectedSamples']} 个采样点"
+        f"（约 {pct:.0f}%，采集节奏 2 小时/次）"
+    )
+    if info["periodRatio"] is not None:
+        note += (
+            f"；期口径 {sample}/{info['periodExpectedSamples']}"
+            f"（约 {info['periodRatio'] * 100:.0f}%，含期初无源的天）"
         )
-        if reason == "source_start":
-            # 两个数一起给：期口径（含无源的那几天）说明「整期够不够」，
-            # 窗口口径说明「有源之后采集本身正常吗」，谁也冒充不了谁
-            window = _source_window_samples(period_type, key, coverage_start)
-            note += f"；在线数据自 {coverage_start} 起才有，本期更早的日期本就无源数据"
-            if window:
-                window_pct = sample_hours / window * 100
-                note += f"（源窗口内 {sample_hours}/{window}，约 {window_pct:.0f}%）"
-        return True, f"{note}，覆盖不全", reason
-
-    if not coverage_start:
-        return False, None, None
-    if start >= coverage_start:
-        return False, None, None
-    covered_from = max(start, coverage_start)
-    covered_days = (date.fromisoformat(_end) - date.fromisoformat(covered_from)).days + 1
-    expected = _expected_samples(period_type, key)
-    covered_points = covered_days * SAMPLES_PER_DAY
-    if covered_days >= (expected // SAMPLES_PER_DAY):
-        return False, None, None
-    return True, (
-        f"在线数据自 {coverage_start} 起才开始采集，{key} 最多只有 {covered_days} 天窗口"
-        f"（≤ {covered_points}/{expected} 个采样点，采集节奏 2 小时/次），覆盖不全"
-    ), "source_start"
+    if info["sourceStartsLate"]:
+        note += (
+            f"；在线数据自 {info['sourceStart']} 起才有，"
+            f"期初（{info['windowStart']} 之前）无源数据，属事实不是故障"
+        )
+    if info["gap"]:
+        note += "，窗口内采集有缺失"
+    return note
 
 
 def _cache_get(cache_key: tuple) -> Any | None:
@@ -1362,21 +1375,29 @@ def report(
     coverage_notes: dict[str, str] = {}
     for source in LINE_SOURCES:
         series = lines[source.key]
-        current_partial, current_note, current_reason = _coverage(
+        current = _coverage_info(
             period,
             period_key,
-            source.coverage_start,
             _as_int((series.get(period_key) or {}).get("sample_hours")),
+            source.coverage_start,
         )
-        prev_partial, prev_note, prev_reason = (
-            _coverage(
+        previous = (
+            _coverage_info(
                 period,
                 prev_period,
-                source.coverage_start,
                 _as_int((series.get(prev_period) or {}).get("sample_hours")),
+                source.coverage_start,
             )
             if prev_period
-            else (False, None, None)
+            else None
+        )
+        current_partial = current["partial"]
+        prev_partial = bool(previous and previous["partial"])
+        current_note = _coverage_note(current, period_key) if current_partial else None
+        prev_note = (
+            _coverage_note(previous, prev_period)
+            if (prev_partial and previous and prev_period)
+            else None
         )
         # 本期或上期覆盖不全，环比一律置 null：半周去重 / 首轮孤点都会造出假涨幅
         delta_blocked = (
@@ -1404,25 +1425,42 @@ def report(
         note = current_note or prev_note
         if note:
             coverage_notes[source.key] = note
-        if current_partial or prev_partial:
+        # 只有「窗口内真的采少了」才告警；期初无源另有 info 说明，不混进同一句
+        flagged = None
+        if current["gap"]:
+            flagged = current
+        elif previous is not None and previous["gap"]:
+            flagged = previous
+        if flagged is not None:
+            is_current = flagged is current
             coverage_flags.append(
                 {
                     "level": "medium",
                     "item": f"{source.key}_partial_coverage",
-                    # 说清是「本期」还是「上期」：W46 的环比被置 null 是因为上期 W45 只有 8/84
                     "label": (
-                        f"{source.label}本期覆盖不全"
-                        if current_partial
-                        else f"{source.label}上期覆盖不全"
+                        f"{source.label}本期采集有缺失"
+                        if is_current
+                        else f"{source.label}上期采集有缺失"
                     ),
-                    "detail": current_note or prev_note,
-                    # source_start = 那几天本来就没有源数据（补不回来）；
-                    # collection_gap = 源数据可用范围内采少了（可修）
-                    "reason": current_reason if current_partial else prev_reason,
+                    "detail": current_note if is_current else prev_note,
+                    "reason": "collection_gap",
                     "action": (
                         "本期与上期的环比一律置 null（deltaBlocked），"
-                        "趋势点保留原始值，但不代表完整周"
+                        "趋势点保留原始值，但不代表完整期"
                     ),
+                }
+            )
+        if current["sourceStartsLate"]:
+            coverage_flags.append(
+                {
+                    "level": "info",
+                    "item": f"{source.key}_source_start",
+                    "label": f"{source.label}数据起点晚于期初",
+                    "detail": (
+                        f"在线数据自 {current['sourceStart']} 起才开始采集，"
+                        f"{period_key} 更早的日期没有源数据（不是采集故障，补不回来）"
+                    ),
+                    "action": "只在质量区作事实说明；覆盖/环比按采集窗口判断",
                 }
             )
         updated = _iso_timestamp((series.get(period_key) or {}).get("updated_at"))
@@ -1434,6 +1472,8 @@ def report(
                 "periods": sorted(series),
                 "kpis": kpis,
                 "breakdown": breakdowns[source.key],
+                # 覆盖三信号：窗口内完整性 / 源起点 / （新鲜度看 meta.updatedAt）
+                "coverage": current,
                 **(({"peakHour": peak_hour}) if (source.key == "online" and peak_hour) else {}),
             }
         )

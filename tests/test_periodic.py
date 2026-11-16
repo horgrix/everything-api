@@ -230,18 +230,22 @@ def test_online_metric_decisions(client):
     flag_items = {flag["item"] for flag in payload["flags"]}
     assert "online_partial_coverage" in flag_items
     # 覆盖用实测采样点算：W45 只有 8/84 个采样点（2 小时/次），不是写死的起始日
+    # 覆盖拆成三个信号：窗口内完整性（唯一告警项）、源起点（info）、新鲜度（meta.updatedAt）
     coverage = next(f for f in payload["flags"] if f["item"] == "online_partial_coverage")
-    assert "8/84" in coverage["detail"]
-    assert "84/84" not in coverage["detail"]
-    # W45 起点早于在线数据起点：属于「没有源数据」，不是采集故障
-    assert coverage["reason"] == "source_start"
-    # 同时给「源窗口内」的数：W45 源窗口只有 11-08 一天 = 12 点，实采 8 → 8/12
+    assert coverage["reason"] == "collection_gap"
+    # W45 采集窗口只有 11-08 一天 = 12 点，实采 8 → 8/12 = 67%，窗口内确有缺失
     assert "8/12" in coverage["detail"]
+    assert "8/84" in coverage["detail"]          # 期口径同时给出，供参考
 
     # W45 自身也是半周：现场置 null，而不是拿更早的期硬凑一个环比
     older = _report(client, key="2026-45")["data"]
     older_online = next(line for line in older["lines"] if line["key"] == "online")
     older_kpis = {kpi["key"]: kpi for kpi in older_online["kpis"]}
+    # 源起点单独成 info flag（本期期初 < 在线数据起点）
+    source = next(f for f in older["flags"] if f["item"] == "online_source_start")
+    assert source["level"] == "info"
+    assert "2026-11-08" in source["detail"]
+    assert older_online["coverage"]["sourceStartsLate"] is True
     assert older_kpis["online_game_cnt"]["value"] == 581
     assert older_kpis["online_game_cnt"]["deltaBlocked"] == "coverage_partial"
     assert older_kpis["online_game_cnt"]["deltaPct"] is None
@@ -496,20 +500,39 @@ def test_expected_samples_uses_elapsed_days_for_running_month(client):
         assert expected <= 30 * SAMPLES_PER_DAY
 
 
-def test_source_window_samples_ignores_unfinished_today(client):
-    """源窗口口径：进行中的期只算到昨天；2026-11 在 11-16 时窗口应是 11-08~11-15 = 96。"""
-    from datetime import date, timedelta
+def test_coverage_info_three_signals(client):
+    """覆盖三信号：窗口内完整性（告警）/ 源起点（info）/ 期口径（参考）。"""
+    from datetime import date
 
-    from app.routers.periodic import _source_window_samples, _today
+    from app.routers.periodic import _coverage_info, _today
 
     today = _today()
     if today == date(2026, 11, 16):
-        assert _source_window_samples("monthly", "2026-11", "2026-11-08") == 96
-    # 已结束的周：窗口就是源起点到期末
-    assert _source_window_samples("weekly", "2026-45", "2026-11-08") == 12
-    assert _source_window_samples("weekly", "2026-46", "2026-11-08") == 84
-    # 没有源起点 → 不提供窗口口径
-    assert _source_window_samples("weekly", "2026-46", None) is None
-    # 窗口起点晚于期末（未来期）→ None，不编造
-    future = (today + timedelta(days=60)).isoformat()
-    assert _source_window_samples("weekly", "2026-46", future) is None
+        monthly = _coverage_info("monthly", "2026-11", 92, "2026-11-08")
+        # 窗口 = 11-08 ~ 昨天(11-15) 共 8 天 = 96；期口径 = 已过 16 天 = 192
+        assert monthly["windowStart"] == "2026-11-08"
+        assert monthly["windowEnd"] == "2026-11-15"
+        assert monthly["expectedSamples"] == 96
+        assert monthly["periodExpectedSamples"] == 192
+        assert round(monthly["ratio"], 3) == 0.958
+        assert monthly["gap"] is False            # 窗口内没缺采 → 不告警
+        assert monthly["sourceStartsLate"] is True   # 但期初无源，环比仍不可比
+        assert monthly["partial"] is True
+
+        # W45：窗口 11-08 一天 = 12 点，实采 8 → 8/12，窗口内确有洞
+        weekly = _coverage_info("weekly", "2026-45", 8, "2026-11-08")
+        assert weekly["windowStart"] == "2026-11-08"
+        assert weekly["expectedSamples"] == 12
+        assert round(weekly["ratio"], 3) == 0.667
+        assert weekly["gap"] is True
+
+    # W46：满覆盖且期初就在源起点之后
+    full = _coverage_info("weekly", "2026-46", 84, "2026-11-08")
+    assert full["expectedSamples"] == 84
+    assert full["ratio"] == 1.0
+    assert full["gap"] is False and full["sourceStartsLate"] is False
+    assert full["partial"] is False
+
+    # sample_hours 缺失（老库）时不编造比例
+    unknown = _coverage_info("weekly", "2026-46", None, "2026-11-08")
+    assert unknown["ratio"] is None and unknown["gap"] is False
