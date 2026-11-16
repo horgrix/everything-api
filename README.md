@@ -240,7 +240,7 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
   | 信号 | 字段 | 含义 | 是否告警 |
   |------|------|------|----------|
-  | 窗口内完整性 | `sampleHours` / `expectedSamples` / `ratio` / `gap` | 采集窗口（源起点~期末，未结束的期只到昨天）里实采/应采 | **是**：`ratio < 0.9` 出 `medium` flag |
+  | 窗口内完整性 | `sampleHours` / `expectedSamples` / `ratio` / `gap` / `windowEndFinal` | 采集窗口（源起点~期末，未结束的期只到昨天）里实采/应采 | **是**：`ratio < 0.9` 出 `medium` flag，但 `windowEndFinal=false` 的期只打印不判失败 |
   | 期初无源 | `sourceStart` / `sourceStartsLate` | 在线数据 2026-11-08 才开始有，期初几天本来就没数据 | 否，只出 `info` flag + 阻断环比 |
   | 采集是否还在跑 | `meta.updatedAt` | 最近更新时间，新鲜度由巡检按 ≤14h 判 | 否 |
 
@@ -249,7 +249,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   W45：窗口 11-08 一天 = 12 点、实采 8 → 8/12 = **67%**（窗口内确有缺失，medium）；
   2026-11：窗口 11-08~11-15 = 96 点、实采 92 → **96%**（不告警），另有 `info` 说明期初无源。
   窗口末端取期末（进行中的期取昨天）而不是「末采样日」：否则采集中途挂掉时窗口会跟着缩短，
-  反而算出 100% 假绿。
+  反而算出 100% 假绿。进行中的期 `windowEndFinal=false`：昨天的数据要等每天 00:05 的同步任务
+  落库，同步延迟时这一格会短暂偏小，巡检对它只打印不判失败。
+  `reason=collection_gap` 指「采集窗口内少采了」——首日启动晚（W45 缺 00/02/04/06）和中途
+  停采都算这一类，都是可修的；「源本来就没有」不在这条里，它走 `sourceStartsLate`。
 
   覆盖类 flag 都带 `scope`（`current` / `previous`）与 `relatedPeriod`，钉死它讲的是哪一期：
   查 W46 时会附一条讲 W45 的 flag（解释「为什么本期没有环比」），`scope=previous` 时 `level`

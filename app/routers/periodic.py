@@ -436,6 +436,9 @@ def _coverage_info(
         "sampleHours": sample_hours,
         "windowStart": window_start.isoformat(),
         "windowEnd": window_end.isoformat(),
+        # 窗口末端是不是「已定稿」：进行中的期取到昨天，昨天的数据要等每天 00:05
+        # 的同步任务落库，同步延迟时这一格会短暂偏小 —— 巡检对 false 的期只打印不判失败
+        "windowEndFinal": not in_progress,
         "expectedSamples": expected,
         # 窗口内完整性：唯一参与告警的指标
         "ratio": round(ratio, 4) if ratio is not None else None,

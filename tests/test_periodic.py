@@ -525,6 +525,7 @@ def test_coverage_info_three_signals(client):
         assert monthly["periodExpectedSamples"] == 192
         assert round(monthly["ratio"], 3) == 0.958
         assert monthly["gap"] is False            # 窗口内没缺采 → 不告警
+        assert monthly["windowEndFinal"] is False  # 进行中：窗口末端还没定稿
         assert monthly["sourceStartsLate"] is True   # 但期初无源，环比仍不可比
         assert monthly["partial"] is True
 
@@ -538,6 +539,7 @@ def test_coverage_info_three_signals(client):
     # W46：满覆盖且期初就在源起点之后
     full = _coverage_info("weekly", "2026-46", 84, "2026-11-08")
     assert full["expectedSamples"] == 84
+    assert full["windowEndFinal"] is True  # 已结束的期，窗口末端是定稿值
     assert full["ratio"] == 1.0
     assert full["gap"] is False and full["sourceStartsLate"] is False
     assert full["partial"] is False
