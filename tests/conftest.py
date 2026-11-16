@@ -221,17 +221,18 @@ def _seed() -> None:
             "SET placeholder_ratio = 0.0 WHERE category_type IN ('all', 'dist')"
         )
         # dist 行：W46 条数口径 0.3404/0.5943/0.5761、人数口径 0.2122/0.74/0.7179（真库值）
-        for value, ratio, player_ratio in (
-            ("0", 0.3404, 0.2122),
-            ("1", 0.5943, 0.74),
-            ("2", 0.5761, 0.7179),
+        for value, ratio, player_ratio, players in (
+            ("0", 0.3404, 0.2122, 300000),
+            ("1", 0.5943, 0.74, 411100),
+            ("2", 0.5761, 0.7179, 350000),
         ):
             conn.execute(
                 "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
-                "SET placeholder_ratio = ?, placeholder_player_ratio = ? "
+                "SET placeholder_ratio = ?, placeholder_player_ratio = ?, "
+                "    placeholder_players = ? "
                 "WHERE category_type = 'dist' AND crawled_at = '2026-46' "
                 "AND category_value = ?",
-                (ratio, player_ratio, value),
+                (ratio, player_ratio, players, value),
             )
         # W45 没有 ALL 行（模拟新周期首日还没重算），只有分型行带占位占比
         for value, ratio in (("0", 0.4131), ("1", 0.7937), ("2", 0.8571)):

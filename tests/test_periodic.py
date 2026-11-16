@@ -315,6 +315,8 @@ def test_placeholder_ratio_exposed_for_online_breakdown(client):
     dist1 = next(item for item in online["breakdown"]["items"] if item["key"] == "1")
     assert dist1["placeholderRatio"] == pytest.approx(0.5943)
     assert dist1["placeholderPlayerRatio"] == pytest.approx(0.74)
+    # 整期口径的整数兜底人数（DWS 对 dist 行也给值）
+    assert dist1["placeholderPlayers"] == 411100
     assert online["breakdown"]["items"][0]["placeholderRatio"] == pytest.approx(0.3404)
 
     peak = online["peakHour"]
