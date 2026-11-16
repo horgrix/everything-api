@@ -484,6 +484,7 @@ def _seed() -> None:
                 week_start TEXT NULL,
                 week_end TEXT NULL,
                 online_game_cnt INTEGER NULL,
+                online_game_cnt_at TEXT NULL,
                 online_peak_players INTEGER NULL,
                 online_peak_pc INTEGER NULL,
                 online_peak_pc_emulator INTEGER NULL,
@@ -511,18 +512,20 @@ def _seed() -> None:
         )
         conn.executemany(
             "INSERT INTO dws_periodic_report_overview_weekly "
-            "(week_key, week_start, week_end, online_game_cnt, online_peak_players, "
+            "(week_key, week_start, week_end, online_game_cnt, online_game_cnt_at, "
+            " online_peak_players, "
             " torchlight_download_total, torchlight_avg_online_players, "
             " heartopia_download_total, heartopia_avg_online_players, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 # 合成的 14 倍放量：只为覆盖 ≥3× 告警逻辑（线上 W45 已修正为 66,379）
-                ("2026-44", "2026-10-26", "2026-11-01", None, None,
+                ("2026-44", "2026-10-26", "2026-11-01", None, None, None,
                  86842, 11813.4, 228910, 8123.5, "2026-11-02 11:35:10"),
                 # W45 概览的在线列是旧快照（763 / 133480），线上实测与在线周期表不符
-                ("2026-45", "2026-11-02", "2026-11-08", 763, 133480,
+                ("2026-45", "2026-11-02", "2026-11-08", 763, "2026-11-07 22", 133480,
                  1224138, 12150.5, 233456, 8231.2, "2026-11-12 18:24:27"),
-                ("2026-46", "2026-11-09", "2026-11-15", 671, 146354,
+                # W46：MAX(game_cnt)=671 在 11-15 22，而在线峰值（人数）在 11-13 22
+                ("2026-46", "2026-11-09", "2026-11-15", 671, "2026-11-15 22", 146354,
                  47319, 10402.1, 254189, 8102.7, "2026-11-16 09:55:05"),
             ],
         )

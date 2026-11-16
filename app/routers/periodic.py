@@ -620,9 +620,13 @@ def _load_overview() -> dict[str, dict[str, Any]]:
     if cached is not None:
         return cached
 
+    # online_game_cnt_at 是 DWS 后加的列（MAX(game_cnt) 那条快照的时间），老概览表没有
+    argmax_column = (
+        ", online_game_cnt_at" if "online_game_cnt_at" in _columns_of(OVERVIEW_TABLE) else ""
+    )
     sql = f"""
         SELECT week_key, week_start, week_end,
-               online_game_cnt, online_peak_players,
+               online_game_cnt, online_peak_players{argmax_column},
                torchlight_download_total, torchlight_avg_online_players,
                heartopia_download_total, heartopia_avg_online_players,
                updated_at
@@ -771,13 +775,14 @@ def _build_concurrent_kpi(
     去重。两者相差几十到上百款都是正常的，因此**不出环比**。
     """
     row = overview.get(period_key) or {}
-    # 概览表为这一列提供「最大值所在小时」时把时间写进 note，否则不写时间：写死某期的时间
-    # 换一期就是错的，看不出最大值出在哪一小时时宁可不提
-    hour = str(row.get("online_game_cnt_hour") or "").strip()
+    # 取值所在小时由概览表 online_game_cnt_at 给（DWS 重算的 argmax 时间），不是 peak_hour：
+    # peak_hour 是「人数最多」那一小时（W46 = 11-13 22），671 在 11-15 22，拼在一起就是错句。
+    # 没有这一列/这一值时宁可不写时间，也不拿 peak_hour 顶。
+    at = str(row.get("online_game_cnt_at") or "").strip() or None
     note = "该周任意一小时里同时在线的最大款数（概览表取 MAX）"
-    if hour:
-        note += f"，出现于 {hour}"
-    note += "；与在线峰值（人数最多的那一小时）不一定同一小时，也不可与「本周去重款数」相减"
+    if at:
+        note += f"，取值于 {at}"
+    note += "；与在线峰值（人数最多的那一小时，见 peakHour）不一定同一小时，也不可与「本周去重款数」相减"
     spec = MetricSpec(
         "concurrent_game_cnt",
         "online_game_cnt",
@@ -798,6 +803,8 @@ def _build_concurrent_kpi(
         "unit": spec.unit,
         "isInt": True,
         "value": value,
+        # 取值所在小时（可与 peakHour.crawledAt 对照：两者不一定同一小时）
+        "concurrent_game_cnt_at": at,
         "prevValue": None,
         "prevPeriodKey": None,
         "deltaAbs": None,

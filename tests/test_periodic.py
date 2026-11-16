@@ -213,6 +213,11 @@ def test_online_metric_decisions(client):
     assert concurrent["label"] == "单小时同时在线款数最高"
     assert "峰值小时" not in concurrent["label"]
     assert "不一定同一小时" in concurrent["note"]
+    # 取值小时来自概览表 online_game_cnt_at，**不能**用 peak_hour（11-13 22）
+    assert concurrent["concurrent_game_cnt_at"] == "2026-11-15 22"
+    assert "2026-11-15 22" in concurrent["note"]
+    assert online["peakHour"]["crawledAt"] == "2026-11-13 22"
+    assert concurrent["concurrent_game_cnt_at"] != online["peakHour"]["crawledAt"]
     assert concurrent["deltaPct"] is None and concurrent["deltaComparable"] is False
     assert concurrent["deltaBlocked"] == "secondary_metric"
     assert "concurrent_game_cnt" not in {kpi["key"] for kpi in payload["coreKpis"]}
@@ -321,6 +326,18 @@ def test_concurrent_kpi_explains_overview_lag():
     )
     assert with_value["value"] == 671
     assert "unavailableReason" not in with_value
+    # 概览表还没有 argmax 列/值时：不写时间，也**不得**回退到 peak_hour 编一个
+    assert with_value["concurrent_game_cnt_at"] is None
+    assert "取值于" not in with_value["note"]
+
+    with_at = _build_concurrent_kpi(
+        {"2026-46": {"online_game_cnt": 671, "online_game_cnt_at": "2026-11-15 22"}},
+        "2026-46",
+        ["2026-46"],
+        12,
+    )
+    assert with_at["concurrent_game_cnt_at"] == "2026-11-15 22"
+    assert "取值于 2026-11-15 22" in with_at["note"]
 
 
 def test_placeholder_ratio_exposed_for_online_breakdown(client):
