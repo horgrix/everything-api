@@ -91,12 +91,11 @@ MAX_WINDOW = 24
 RANK_CATEGORIES = ("top", "gain", "loss")
 # 火炬之光单期环比超过这个倍数就按「疑似口径切换」告警
 SUSPECT_JUMP_RATIO = 3.0
-# 榜单「样本太薄」的两个阈值（满足任一即判低样本）：
-#   · 中位数严格小于 8：整榜一半以上的游戏只有不到 8 个小时的数据（W46 dist_1 = 4.5）
-#   · 最大值也小于 10：连覆盖最好的那个游戏都不足 10 小时，说明整周采集本身很薄
-#     （W45 dist_0 中位数正好 8.0 卡在边界，但 max 也只有 8，属于覆盖太薄而非满周正常榜）
-LOW_SAMPLE_MEDIAN_HOURS = 8
-LOW_SAMPLE_MAX_HOURS = 10
+# 榜单「样本太薄」阈值：该榜 realHours 的中位数**严格小于** 8 小时才算。
+#   · 量的是「每个游戏自己的有效在线小时数」，即榜内单条数据够不够厚（W46 dist_1 中位数 4.5 → 薄）；
+#   · 用严格小于：W45 dist_0 中位数正好 8.0，它是高区分度的商业榜，只是那一周覆盖只有 8 小时，
+#     那属于覆盖问题，由 online_partial_coverage 那条 flag 说，不在这里重复判。
+LOW_SAMPLE_HOURS = 8
 # 概览表与在线周期表的容差（相对差）
 OVERVIEW_TOLERANCE = 0.01
 
@@ -1501,10 +1500,7 @@ def rank(
             "minRealHours": hours[0],
             "maxRealHours": hours[-1],
             "medianRealHours": median,
-            # 两个条件表达的是同一件事：这个榜的样本撑不起名次
-            "lowSample": (
-                median < LOW_SAMPLE_MEDIAN_HOURS or hours[-1] < LOW_SAMPLE_MAX_HOURS
-            ),
+            "lowSample": median < LOW_SAMPLE_HOURS,
         }
 
     return _cache_set(

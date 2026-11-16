@@ -436,7 +436,8 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
     assert edge["sample"]["medianRealHours"] == 8
     assert edge["sample"]["lowSample"] is False
 
-    # W45 dist_0 的真实形状：median 8 / max 8 —— 中位数不漏，靠「max < 10」兜住
+    # W45 dist_0 的真实形状：median 8 / max 8 —— 覆盖太薄但单条数据不薄，
+    # 由 online_partial_coverage 说话，lowSample 不该重复判
     thin = client.get(
         f"{PREFIX}/rank",
         params={
@@ -449,7 +450,7 @@ def test_rank_exposes_real_hours_and_sample_flag(client):
     ).json()["data"]
     assert thin["sample"]["medianRealHours"] == 8
     assert thin["sample"]["maxRealHours"] == 8
-    assert thin["sample"]["lowSample"] is True
+    assert thin["sample"]["lowSample"] is False
 
     # 下载/广告榜没有这一列：字段为 null，sample 为 null
     download = client.get(
