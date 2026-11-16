@@ -203,6 +203,29 @@ LINE_SOURCES: tuple[LineSource, ...] = (
 
 LINE_BY_KEY = {source.key: source for source in LINE_SOURCES}
 
+# 采集覆盖款数（DWS 后加的列，与 game_cnt 同一行）：它回答的是「当期名单覆盖多少款」，
+# 不是「有下载/有在线多少款」。两者相减才是「当期为 0 的款数」，不许互相代替。
+ROSTER_COLUMN = "game_cnt_roster"
+ROSTER_LABEL = "覆盖游戏款数"
+ROSTER_NOTE = (
+    "当期采集名单覆盖到的游戏款数（含该项为 0 的）；"
+    "与同线款数相减即为该项为 0 的款数，不能当作有下载/有在线"
+)
+
+
+def _roster_spec(source: LineSource) -> MetricSpec | None:
+    """覆盖款数指标：表里没这一列就不存在（老库、还没重算的期都不强造）。"""
+    if ROSTER_COLUMN not in _columns_of(source.table):
+        return None
+    if source.key == "download":
+        key = ROSTER_COLUMN
+    elif source.key == "online":
+        # 不能把 online_game_cnt 的列改成 roster：那会把「有在线的款数」变成覆盖款数
+        key = f"online_{ROSTER_COLUMN}"
+    else:
+        return None
+    return MetricSpec(key, ROSTER_COLUMN, ROSTER_LABEL, "款", note=ROSTER_NOTE)
+
 # {(period_type, key, window): (写入时刻, payload)}
 _CACHE: dict[tuple, tuple[float, Any]] = {}
 
@@ -567,6 +590,9 @@ def _load_line_rows(period_type: str) -> dict[str, dict[str, dict[str, Any]]]:
     result: dict[str, dict[str, dict[str, Any]]] = {}
     for source in LINE_SOURCES:
         columns = ", ".join(metric.column for metric in source.metrics)
+        # 覆盖款数是后加的列，不在 metrics 里按线固定，列在才取（和 sample_hours 一样按列存断）
+        if ROSTER_COLUMN in _columns_of(source.table):
+            columns += f", {ROSTER_COLUMN}"
         if "sample_hours" in _columns_of(source.table):
             columns += ", sample_hours"
         active = _active_filter(source.table)
@@ -734,17 +760,30 @@ def _build_concurrent_kpi(
     periods: list[str],
     window: int,
 ) -> dict[str, Any]:
-    """副指标：峰值小时同时在线款数（概览表的 online_game_cnt）。
+    """副指标：单小时同时在线款数最高（概览表的 online_game_cnt）。
 
-    这个概念与主线「本周去重款数」不同：前者是某一小时的并发款数（同一时刻），
-    后者是整周 app_id 去重。两者相差几十到上百款都是正常的，因此**不出环比**。
+    名字里不能出现「峰值小时」：这个值取的是 MAX(game_cnt)，出现在采集名单覆盖最全的那一小时
+    （W46 = 11-15 22 / 671）；而「在线峰值」是人数最多的那一小时（W46 = 11-13 22 / 146,354 人 /
+    653 款），两者不是同一小时。写成「峰值小时同时在线款数」会被拿去和 653 对账，
+    怎么看都像错了一个数。
+
+    它也与主线「本周去重款数」不同：前者是某一小时的并发款数（同一时刻），后者是整周 app_id
+    去重。两者相差几十到上百款都是正常的，因此**不出环比**。
     """
+    row = overview.get(period_key) or {}
+    # 概览表为这一列提供「最大值所在小时」时把时间写进 note，否则不写时间：写死某期的时间
+    # 换一期就是错的，看不出最大值出在哪一小时时宁可不提
+    hour = str(row.get("online_game_cnt_hour") or "").strip()
+    note = "该周任意一小时里同时在线的最大款数（概览表取 MAX）"
+    if hour:
+        note += f"，出现于 {hour}"
+    note += "；与在线峰值（人数最多的那一小时）不一定同一小时，也不可与「本周去重款数」相减"
     spec = MetricSpec(
         "concurrent_game_cnt",
         "online_game_cnt",
-        "峰值小时同时在线款数",
+        "单小时同时在线款数最高",
         "款",
-        note="该周并发最高那一小时同时在线的款数（概览表口径），与「本周去重款数」不同口径，两者不可相减",
+        note=note,
     )
     available = [
         period
@@ -1123,58 +1162,42 @@ def _build_flags(
     """数据质量标记：前端拿来加角标 / 提示，不用自己算。"""
     flags: list[dict[str, Any]] = []
 
-    # 1) 概览表与在线周期表：款数本来就是两个指标（并发 vs 去重），峰值才叫口径差异
+    # 1) 概览表与在线周期表：只在**同定义**的量之间比（在线峰值 = 那一小时的人数，两边同义）。
+    #
+    #    款数不再比：概览表的 online_game_cnt 是「单小时最大并发款数」（W46 = 671，出现在 11-15 22），
+    #    周期表的 game_cnt 是「整周去重款数」（W46 = 728）。两个定义不同的量每周必然不等，
+    #    比出来的 flag 是纯噪音（W46 差 57、剔兜底前差 189，都不说明任何数据问题），
+    #    所以这条检查直接去掉；也不改成「概览值 vs concurrent_game_cnt」——后者就是读概览表
+    #    同一列（见 _build_concurrent_kpi），自比必然相等，留着只会假装做了校验。
     online_row = lines.get("online", {}).get(period_key) or {}
     overview_row = overview.get(period_key) or {}
-    for column, label in (("online_peak_players", "在线峰值"), ("online_game_cnt", "在线游戏数")):
-        from_overview = _as_number(overview_row.get(column))
-        line_column = "peak_online_players" if column == "online_peak_players" else "game_cnt"
-        from_line = _as_number(online_row.get(line_column))
-        if from_overview is None or from_line is None:
-            continue
+    from_overview = _as_number(overview_row.get("online_peak_players"))
+    from_line = _as_number(online_row.get("peak_online_players"))
+    if from_overview is not None and from_line is not None:
         base = max(abs(from_overview), abs(from_line), 1)
-        if abs(from_overview - from_line) / base <= OVERVIEW_TOLERANCE:
-            continue
-        if column == "online_game_cnt":
-            # 已核过库：概览表是「峰值小时并发款数」，周期表是「周内去重款数」
+        if abs(from_overview - from_line) / base > OVERVIEW_TOLERANCE:
+            label = "在线峰值"
+            coverage = (coverage_notes or {}).get("online")
+            detail = (
+                f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}（{period_key}）"
+            )
+            if coverage:
+                # 半期（如 W45）里概览会取到「没有明细覆盖」的那几个小时，属覆盖差不是数据错误
+                detail += f"；{coverage}，概览取到了无明细覆盖的小时，属覆盖差"
+            else:
+                detail += "；两表统计池不同，不是同一份数据的旧快照"
             flags.append(
                 {
-                    "level": "info",
-                    "item": "online_game_cnt_mismatch",
-                    "label": "在线款数两种口径并存",
-                    "detail": (
-                        f"概览表 {int(from_overview):,} 是峰值小时同时在线款数（并发）；"
-                        f"在线周期表 {int(from_line):,} 是本周有在线记录的游戏数（去重）。"
-                        f"相差 {abs(int(from_overview) - int(from_line)):,} 款属正常，不是数据错误"
-                    ),
+                    "level": "medium",
+                    "item": "online_peak_players_mismatch",
+                    "label": f"{label}跨表口径差异",
+                    "detail": detail,
                     "action": (
-                        "主口径用去重款数；并发款数已作为 concurrent_game_cnt 副指标输出，"
-                        "两者不要相减、不要算环比"
+                        "已定口径：在线类指标一律用在线周期表（本接口返回值），"
+                        "概览表仅用于「按游戏」指标"
                     ),
                 }
             )
-            continue
-        coverage = (coverage_notes or {}).get("online")
-        detail = (
-            f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}（{period_key}）"
-        )
-        if coverage:
-            # 半期（如 W45）里概览会取到「没有明细覆盖」的那几个小时，属覆盖差不是数据错误
-            detail += f"；{coverage}，概览取到了无明细覆盖的小时，属覆盖差"
-        else:
-            detail += "；两表统计池不同，不是同一份数据的旧快照"
-        flags.append(
-            {
-                "level": "medium",
-                "item": f"{column}_mismatch",
-                "label": f"{label}跨表口径差异",
-                "detail": detail,
-                "action": (
-                    "已定口径：在线类指标一律用在线周期表（本接口返回值），"
-                    "概览表仅用于「按游戏」指标"
-                ),
-            }
-        )
 
     # 2) 趋势期数不足的业务线
     for line_key, kpis in line_kpis.items():
@@ -1437,9 +1460,27 @@ def report(
             )
             for metric in source.metrics
         ]
-        # 副指标：峰值小时并发款数（只在周报有概览表；不进主 KPI、不出环比）
+        # 副指标：单小时同时在线款数最高（只在周报有概览表；不进主 KPI、不出环比）
         if source.key == "online" and overview:
             kpis.append(_build_concurrent_kpi(overview, period_key, all_periods, window))
+        # 覆盖款数：列在**且该期有值**才吐。重算前是 NULL，吐个 null 出去只会让前端
+        # 在页面上写「覆盖 null 款中 0 款为 0」
+        roster_spec = _roster_spec(source)
+        if roster_spec is not None and _pick_value(series.get(period_key), ROSTER_COLUMN) is None:
+            roster_spec = None
+        if roster_spec is not None:
+            kpis.append(
+                _build_kpi(
+                    roster_spec,
+                    source.key,
+                    series,
+                    period_key,
+                    all_periods,
+                    window,
+                    is_partial,
+                    delta_blocked=delta_blocked,
+                )
+            )
         line_kpis[source.key] = kpis
         note = current_note or prev_note
         if note:

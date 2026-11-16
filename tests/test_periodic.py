@@ -104,7 +104,9 @@ def test_report_players_and_quality_flags(client):
 
     flag_items = {flag["item"] for flag in payload["flags"]}
     assert "torchlight_download_jump" in flag_items          # W44 → W45 14 倍
-    assert "online_game_cnt_mismatch" in flag_items          # 概览 671 vs 周期表 860
+    # 在线款数不再跨表比：概览 671（单小时最大）vs 周期表 728（整周去重）定义不同，
+    # 比出来的 flag 每周都是噪音，已删除
+    assert "online_game_cnt_mismatch" not in flag_items
 
     assert "ad_unclassified_dist" in flag_items
     assert "retired_columns" in flag_items
@@ -181,13 +183,8 @@ def test_report_labels_and_kpi_notes(client):
     # 没有口径需要解释的指标不带 note
     assert "note" not in _kpi(payload, "download_total")
 
-    # 款数差异已核实为两个不同指标（并发 vs 去重），只做 info 说明，不再报成数据错误
-    mismatch = next(
-        flag for flag in payload["flags"] if flag["item"] == "online_game_cnt_mismatch"
-    )
-    assert mismatch["level"] == "info"
-    assert "并发" in mismatch["detail"] and "去重" in mismatch["detail"]
-    assert "concurrent_game_cnt" in mismatch["action"]
+    # 款数不再报跨表不一致（并发 vs 去重是两个指标，没有可比的共同定义）
+    assert not [flag for flag in payload["flags"] if flag["item"] == "online_game_cnt_mismatch"]
 
 
 def test_online_metric_decisions(client):
@@ -209,10 +206,13 @@ def test_online_metric_decisions(client):
     assert kpis["online_peak_players"]["deltaPct"] is None
     assert kpis["online_peak_players"]["deltaComparable"] is False
 
-    # 副指标：峰值小时并发款数，没有环比，也不进 6 个主 KPI
+    # 副指标：单小时同时在线款数最高，没有环比，也不进 6 个主 KPI
     concurrent = kpis["concurrent_game_cnt"]
     assert concurrent["value"] == 671
-    assert concurrent["label"] == "峰值小时同时在线款数"
+    # 不能叫「峰值小时」：671 出现的那一小时与在线峰值（人数最多）不是同一小时
+    assert concurrent["label"] == "单小时同时在线款数最高"
+    assert "峰值小时" not in concurrent["label"]
+    assert "不一定同一小时" in concurrent["note"]
     assert concurrent["deltaPct"] is None and concurrent["deltaComparable"] is False
     assert concurrent["deltaBlocked"] == "secondary_metric"
     assert "concurrent_game_cnt" not in {kpi["key"] for kpi in payload["coreKpis"]}
@@ -572,3 +572,61 @@ def test_coverage_level_by_impact_not_fixability(client):
 
     # 上期的问题永不占告警位
     assert _coverage_level(broken, is_current=False) == "info"
+
+
+def test_roster_kpi_is_a_separate_metric(client):
+    """覆盖款数（game_cnt_roster）是**另一格**，不能顶掉有下载 / 有在线的款数。"""
+    payload = _report(client)["data"]
+    lines = {line["key"]: line for line in payload["lines"]}
+    download = {kpi["key"]: kpi for kpi in lines["download"]["kpis"]}
+    online = {kpi["key"]: kpi for kpi in lines["online"]["kpis"]}
+
+    assert download["game_cnt_roster"]["value"] == 860
+    assert download["game_cnt_roster"]["label"] == "覆盖游戏款数"
+    assert download["game_cnt_roster"]["unit"] == "款"
+    assert "名单" in download["game_cnt_roster"]["note"]
+    assert "game_cnt" in download  # 有下载款数照旧
+
+    assert online["online_game_cnt_roster"]["value"] == 860
+    assert online["online_game_cnt_roster"]["label"] == "覆盖游戏款数"
+    # 主口径没被换掉：有在线的款数仍然是 online_game_cnt 那一格
+    assert online["online_game_cnt"]["label"] == "在线游戏数（去重）"
+    assert {kpi["key"] for kpi in payload["coreKpis"]} >= {"online_game_cnt"}
+
+    # 覆盖款数不进 6 个主 KPI（它解释的是「多少款为 0」，不是每期都看的数）
+    core_keys = {kpi["key"] for kpi in payload["coreKpis"]}
+    assert "game_cnt_roster" not in core_keys
+    assert "online_game_cnt_roster" not in core_keys
+
+    # 列在、但这一期还没重算出值（W45 为 NULL）：宁可不吐，也别让前端去拼「覆盖 null 款」
+    older = _report(client, key="2026-45")["data"]
+    older_lines = {line["key"]: line for line in older["lines"]}
+    assert "game_cnt_roster" not in {kpi["key"] for kpi in older_lines["download"]["kpis"]}
+    assert "game_cnt_roster" not in {kpi["key"] for kpi in older_lines["online"]["kpis"]}
+
+
+def test_roster_spec_requires_column(monkeypatch):
+    """老库没有 game_cnt_roster 列时，这条指标不存在——不猜、不拿 game_cnt 顶。"""
+    from app.routers import periodic
+
+    download = periodic.LINE_BY_KEY["download"]
+    monkeypatch.setitem(periodic._COLUMNS, download.table, {"game_cnt", "download_total"})
+    assert periodic._roster_spec(download) is None
+
+    monkeypatch.setitem(
+        periodic._COLUMNS, download.table, {"game_cnt", "game_cnt_roster"}
+    )
+    spec = periodic._roster_spec(download)
+    assert spec is not None
+    assert (spec.key, spec.column) == ("game_cnt_roster", "game_cnt_roster")
+
+    online = periodic.LINE_BY_KEY["online"]
+    monkeypatch.setitem(periodic._COLUMNS, online.table, {"game_cnt", "game_cnt_roster"})
+    online_spec = periodic._roster_spec(online)
+    assert (online_spec.key, online_spec.column) == (
+        "online_game_cnt_roster",
+        "game_cnt_roster",
+    )
+    # 广告线没有名单覆盖的概念
+    monkeypatch.setitem(periodic._COLUMNS, periodic.LINE_BY_KEY["ad"].table, {"app_cnt"})
+    assert periodic._roster_spec(periodic.LINE_BY_KEY["ad"]) is None

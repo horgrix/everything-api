@@ -91,6 +91,7 @@ def _seed() -> None:
                 category_type TEXT NOT NULL,
                 category_value TEXT NOT NULL,
                 game_cnt INTEGER NULL,
+                game_cnt_roster INTEGER NULL,
                 download_total INTEGER NULL,
                 download_app INTEGER NULL,
                 download_pc INTEGER NULL,
@@ -141,6 +142,12 @@ def _seed() -> None:
                 ("weekly", "2026-46", "dist", "2", 175, 1647761, 1647761, 0),
             ],
         )
+        # 覆盖款数（DWS 后加的列）：只有重算过的期才有值，W45 故意留 NULL，
+        # 验证「列在但该期没数」时接口不吐这条 KPI
+        conn.execute(
+            "UPDATE dws_taptap_download_periodic_report SET game_cnt_roster = 860 "
+            "WHERE period_type = 'weekly' AND crawled_at = '2026-46' AND category_type = 'all'"
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_periodic_report (
@@ -150,6 +157,7 @@ def _seed() -> None:
                 category_type TEXT NOT NULL,
                 category_value TEXT NOT NULL,
                 game_cnt INTEGER NULL,
+                game_cnt_roster INTEGER NULL,
                 peak_online_players INTEGER NULL,
                 avg_online_players REAL NULL,
                 updated_at TEXT NULL,
@@ -198,6 +206,11 @@ def _seed() -> None:
         conn.execute(
             "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
             "SET sample_hours = 84 WHERE crawled_at = '2026-46' AND category_type = 'all'"
+        )
+        conn.execute(
+            "UPDATE dws_taptap_pc_online_peak_players_periodic_report "
+            "SET game_cnt_roster = 860 "
+            "WHERE period_type = 'weekly' AND crawled_at = '2026-46' AND category_type = 'all'"
         )
         # dist_peak：同一小时的快照，三项在线之和恒等于 all 行（DWS 每天重算）
         conn.executemany(

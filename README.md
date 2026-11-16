@@ -292,7 +292,22 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 **在线类指标的口径已定**：以在线周期表 `dws_taptap_pc_online_peak_players_periodic_report`
 （`category_type='all'`）为准，概览表的 `online_game_cnt` / `online_peak_players` 只供
 「按游戏」指标使用。两表差异不是旧快照（W45 概览偏大、W46 概览偏小，方向相反），
-所以接口只把它作为 `medium` flag 透出，不参与 KPI 取值。
+所以接口只把**在线峰值**作为 `medium` flag 透出，不参与 KPI 取值；
+款数不再跨表对比（概览是单小时最大、周期表是整周去重，定义不同，比出来必为噪音）
+
+**覆盖款数 `game_cnt_roster`（采集名单口径）**
+
+DWS 在下载表、在线表各加一列 `game_cnt_roster`（与 `game_cnt` 同一行）：当期采集名单覆盖
+多少款游戏，含该项为 0 的。它只回答「覆盖基数」，所以作为**独立一格**透出：
+
+| 位置 | key | 含义 |
+|------|-----|------|
+| `lines[download].kpis` | `game_cnt_roster` | 下载线覆盖款数（W46 860 里 12 款当周下载为 0 → 有下载 848） |
+| `lines[online].kpis` | `online_game_cnt_roster` | 在线线覆盖款数（W46 860 里 132 款整周无真实在线小时 → 有在线 728） |
+
+两条都是**新**指标，`game_cnt` / `online_game_cnt` 的取值和 key 一字未改；都不进 6 个主 KPI。
+列不存在（老库）或该期还是 NULL（重算未跑）时**整条不输出**，不会吐一个 null 上去——
+前端按「有这个 key 才渲染覆盖句」。
 
 分发类型文案统一为：`0 商业游戏 / 1 独立小游戏 / 2 Maker 小游戏`（全站一致，旧名
 「创意工坊 / TapMaker」已废弃）。
@@ -302,13 +317,18 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 | 指标 | 含义 | 位置 | 环比 |
 |------|------|------|------|
 | `online_game_cnt` | 本周有在线记录的游戏（`app_id` 去重）**主口径** | `coreKpis` / `lines[online].kpis` | 正常（覆盖不全时置 null） |
-| `concurrent_game_cnt` | 峰值那一小时同时在线的款数（概览表口径） | 只在 `lines[online].kpis` | **永远为 null**（`deltaBlocked=secondary_metric`） |
+| `concurrent_game_cnt` | **单小时**同时在线的最大款数（概览表 `MAX(game_cnt)`） | 只在 `lines[online].kpis` | **永远为 null**（`deltaBlocked=secondary_metric`） |
 
 概览周表是每周一生成上一周的，所以**进行中的当期没有这一行**：该期 `concurrent_game_cnt`
 的 `value=null`、`hasValue=false`，并带 `unavailableReason` 说明原因（不是数据断了，
 前端别渲染成 0）；跨表差异 flag 同样不会挂在当期上。
 
-W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻 vs 整周），不是数据错误。
+**这个副指标不能叫「峰值小时」**：它是 `MAX(game_cnt)`，出现在名单覆盖最全的那一小时
+（W46 = 11-15 22 / 671），而在线峰值（人数最多）是另一小时（W46 = 11-13 22 / 146,354 人 /
+653 款）。两个时间点焊在一起就会让人拿 671 和 653 对账，且担心其中一个错了。
+概览表带 `online_game_cnt_hour` 时，`note` 里会写出最大值所在小时（动态，不写死）。
+
+W46 去重 728、单小时最大 671，覆盖 860；三者定义各异，同页同时出现属正常，不可相减。
 
 **环比会在什么时候被置 null**：KPI 上的 `deltaBlocked` 字段给出原因
 
