@@ -661,3 +661,18 @@ def test_overview_argmax_column_accepts_both_names():
     )
     # 老概览表两列都没有：不拼、不报错，at 字段为 null
     assert _overview_argmax_select({"week_key", "online_game_cnt"}) == ""
+
+
+def test_missing_column_logs_one_warning(caplog):
+    """列名差一个词 = 静默少一句文案，数字巡检抓不到：缺列时必须留 WARNING 且只留一条。"""
+    import logging
+
+    from app.routers import periodic
+
+    periodic._WARNED_MISSING.clear()
+    with caplog.at_level(logging.WARNING, logger=periodic.logger.name):
+        assert periodic._overview_argmax_select({"week_key", "online_game_cnt"}) == ""
+        assert periodic._overview_argmax_select({"week_key", "online_game_cnt"}) == ""
+    warned = [r for r in caplog.records if "online_game_cnt_hour" in r.getMessage()]
+    assert len(warned) == 1
+    assert warned[0].levelno == logging.WARNING

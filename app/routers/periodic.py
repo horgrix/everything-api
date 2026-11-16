@@ -216,6 +216,10 @@ ROSTER_NOTE = (
 def _roster_spec(source: LineSource) -> MetricSpec | None:
     """覆盖款数指标：表里没这一列就不存在（老库、还没重算的期都不强造）。"""
     if ROSTER_COLUMN not in _columns_of(source.table):
+        if source.key in ("download", "online"):
+            _warn_missing_column(
+                source.table, ROSTER_COLUMN, "覆盖款数这条（含前端说明句）会整条缺失"
+            )
         return None
     if source.key == "download":
         key = ROSTER_COLUMN
@@ -331,6 +335,24 @@ def _query(sql: str, max_rows: int = 5000) -> list[dict[str, Any]]:
 
 # 表→列名集合（表结构不会在进程存活期间变），用来判断该不该加 is_active 过滤
 _COLUMNS: dict[str, set[str]] = {}
+
+
+# 依赖列缺失时只喊一次：缺列是部署/口径变更事故，不应该每请求刷屏
+_WARNED_MISSING: set[str] = set()
+
+
+def _warn_missing_column(table: str, column: str, impact: str) -> None:
+    """依赖列不在时打一条 WARNING。
+
+    为什么特意加：`game_cnt_roster` / `online_game_cnt_hour` 都是后加的列，取不到时
+    逻辑是**静默降级**的（少一条 KPI / 时间为 null），不报错、数字也仍然对，只有文案
+    少一句——靠数字巡检抓不到，只能靠人眼看 note；库列名差一个词就白做一版。
+    """
+    key = f"{table}.{column}"
+    if key in _WARNED_MISSING:
+        return
+    _WARNED_MISSING.add(key)
+    logger.warning("依赖列缺失 %s：%s（只报一次）", key, impact)
 
 
 def _columns_of(table: str) -> set[str]:
@@ -620,10 +642,17 @@ def _overview_argmax_select(columns: set[str]) -> str:
     `online_game_cnt_hour`（两者数据一样，W46 = 2026-11-15 22）。两个都认，统一
     别名成 `online_game_cnt_at` 往上走，免得下游记两个名字。
     """
-    if "online_game_cnt_at" in columns:
-        return ", online_game_cnt_at"
     if "online_game_cnt_hour" in columns:
         return ", online_game_cnt_hour AS online_game_cnt_at"
+    if "online_game_cnt_at" in columns:
+        return ", online_game_cnt_at"
+    # 两列都没有是能力缺失，不是「本期无值」：静默跳过会让「发布了但 note 仍无时间」
+    # 只能靠人眼比文案才能发现，所以留一条 WARNING（同一列只报一次）
+    _warn_missing_column(
+        OVERVIEW_TABLE,
+        "online_game_cnt_hour",
+        "概览表没有 argmax 小时列，concurrent_game_cnt_at 将恒为 null",
+    )
     return ""
 
 
