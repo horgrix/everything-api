@@ -275,3 +275,21 @@ def test_peak_hour_reads_dist_peak_and_breakdown_marks_summable(client):
     assert older_peak["crawledAt"] == "2026-11-08 20"
     assert older_peak["sumPeakOnlinePlayers"] == 125697
     assert older_peak["sumsMatch"] is True
+
+
+def test_concurrent_kpi_explains_overview_lag():
+    """概览周表周一才出上一周：当期副指标缺值要说原因，而不是空着让人猜。"""
+    from app.routers.periodic import _build_concurrent_kpi
+
+    kpi = _build_concurrent_kpi({}, "2026-47", ["2026-46", "2026-47"], 12)
+    assert kpi["key"] == "concurrent_game_cnt"
+    assert kpi["value"] is None and kpi["hasValue"] is False
+    assert kpi["deltaComparable"] is False
+    assert "周一" in kpi["unavailableReason"]
+
+    # 有值时不带 unavailableReason
+    with_value = _build_concurrent_kpi(
+        {"2026-46": {"online_game_cnt": 671}}, "2026-46", ["2026-46"], 12
+    )
+    assert with_value["value"] == 671
+    assert "unavailableReason" not in with_value

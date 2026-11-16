@@ -643,6 +643,18 @@ def _build_concurrent_kpi(
         "insufficientHistory": len(available) < INSUFFICIENT_POINTS,
         "hasValue": value is not None,
         "note": spec.note,
+        # 概览周表只在周一产出上一周：当期（如进行中的 W47）必然还没这一行。
+        # 告诉前端为什么是空的，别渲染成 0、也别当成数据断了
+        **(
+            {}
+            if value is not None
+            else {
+                "unavailableReason": (
+                    "概览周表每周一才生成上一周，本期还没有这一行；"
+                    "等下一个周一生成后本字段会自动出现"
+                )
+            }
+        ),
     }
 
 

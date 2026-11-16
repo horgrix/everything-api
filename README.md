@@ -266,6 +266,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 | `online_game_cnt` | 本周有在线记录的游戏（`app_id` 去重）**主口径** | `coreKpis` / `lines[online].kpis` | 正常（覆盖不全时置 null） |
 | `concurrent_game_cnt` | 峰值那一小时同时在线的款数（概览表口径） | 只在 `lines[online].kpis` | **永远为 null**（`deltaBlocked=secondary_metric`） |
 
+概览周表是每周一生成上一周的，所以**进行中的当期没有这一行**：该期 `concurrent_game_cnt`
+的 `value=null`、`hasValue=false`，并带 `unavailableReason` 说明原因（不是数据断了，
+前端别渲染成 0）；跨表差异 flag 同样不会挂在当期上。
+
 W46 去重 860、并发 671，两者相差 189 款是结构性的（同一时刻 vs 整周），不是数据错误。
 
 **环比会在什么时候被置 null**：KPI 上的 `deltaBlocked` 字段给出原因
