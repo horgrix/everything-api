@@ -106,7 +106,7 @@ def test_report_players_and_quality_flags(client):
     # 高危项排在最前
     assert payload["flags"][0]["level"] == "high"
 
-    # 换一期看：概览的在线峰值是旧快照，也要被抓出来
+    # 换一期看：概览与在线周期表的口径差异也要被抓出来
     older = _report(client, key="2026-45")["data"]
     older_flags = {flag["item"] for flag in older["flags"]}
     assert "online_peak_players_mismatch" in older_flags
@@ -159,3 +159,26 @@ def test_rank_dedupes_and_limits(client):
 
     unknown = client.get(f"{PREFIX}/rank", params={"line": "nope"})
     assert unknown.status_code == 400
+
+
+def test_report_labels_and_kpi_notes(client):
+    """分发类型文案与全站统一，广告口径在 KPI 上带 note，在线差异已定口径。"""
+    payload = _report(client)["data"]
+    assert payload["meta"]["distLabels"] == {
+        "0": "商业游戏",
+        "1": "独立小游戏",
+        "2": "Maker 小游戏",
+    }
+
+    ads = _kpi(payload, "ad_total")
+    assert ads["label"] == "广告曝光"
+    assert "位次" in ads["note"]  # 采集位次，不是用户级曝光量
+    # 没有口径需要解释的指标不带 note
+    assert "note" not in _kpi(payload, "download_total")
+
+    mismatch = next(
+        flag for flag in payload["flags"] if flag["item"] == "online_game_cnt_mismatch"
+    )
+    assert mismatch["level"] == "medium"
+    assert "在线周期表" in mismatch["action"]
+    assert "两表统计池不同" in mismatch["detail"]

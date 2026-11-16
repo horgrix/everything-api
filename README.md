@@ -235,12 +235,21 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 | `download_total` | 下载总量 | 次 | download |
 | `download_pc` | PC 下载量 | 次 | download |
 | `download_app` | APP 下载量 | 次 | download |
-| `ad_total` | 广告总曝光（`ad_views + pcebid_views`） | 次 | ad |
+| `ad_total` | 广告曝光（`ad_views + pcebid_views`，**采集位次**） | 次 | ad |
 
 每个 KPI 对象字段：`value` / `prevValue` / `prevPeriodKey` / `deltaAbs` / `deltaPct` /
 `direction` / `deltaComparable` / `trend[]` / `availablePeriods` / `historyPoints` /
-`insufficientHistory` / `hasValue` / `unit` / `isInt`；`meta` 里同样有整篇的
-`availablePeriods`、`insufficientHistory`、`isPartial`、`retiredColumns`。
+`insufficientHistory` / `hasValue` / `unit` / `isInt`；需要解释口径的指标额外带 `note`
+（目前只有广告三项：每游戏每小时在每个广告坑位出现计 1 次，**不是用户级曝光量**）。
+`meta` 里还有整篇的 `availablePeriods`、`insufficientHistory`、`isPartial`、`retiredColumns`、`distLabels`。
+
+**在线类指标的口径已定**：以在线周期表 `dws_taptap_pc_online_peak_players_periodic_report`
+（`category_type='all'`）为准，概览表的 `online_game_cnt` / `online_peak_players` 只供
+「按游戏」指标使用。两表差异不是旧快照（W45 概览偏大、W46 概览偏小，方向相反），
+所以接口只把它作为 `medium` flag 透出，不参与 KPI 取值。
+
+分发类型文案统一为：`0 商业游戏 / 1 独立小游戏 / 2 Maker 小游戏`（全站一致，旧名
+「创意工坊 / TapMaker」已废弃）。
 
 与 `report-metric-spec.json` 的对应关系：KPI key 完全一致；spec 里的 `qualityFlags`
 就是本接口顶层的 `flags`（同一组 `{level,item,label,detail,action}` 对象）。

@@ -65,7 +65,7 @@ AD_RANK_TABLE = "dws_taptap_ad_aggr_v6_periodic_rank"
 ONLINE_RANK_TABLE = "dws_taptap_pc_online_peak_players_periodic_rank"
 
 # distribution_type → 业务名称（前端不再自己维护一份）
-DIST_LABELS = {"0": "商业游戏", "1": "创意工坊", "2": "TapMaker"}
+DIST_LABELS = {"0": "商业游戏", "1": "独立小游戏", "2": "Maker 小游戏"}
 UNKNOWN_DIST = "未分类"
 MAX_DIST_KEYS = ("0", "1", "2")
 
@@ -106,6 +106,8 @@ class MetricSpec:
     label: str
     unit: str
     is_int: bool = True
+    # 口径备注（前端可做 tooltip）。比如广告是「位次」而不是用户级曝光
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,9 +141,15 @@ LINE_SOURCES: tuple[LineSource, ...] = (
         breakdown_column="total_views",
         games_column="app_cnt",
         metrics=(
-            MetricSpec("ad_total", "total_views", "广告总曝光", "次"),
-            MetricSpec("ad_app", "ad_views", "APP 曝光", "次"),
-            MetricSpec("ad_pcebid", "pcebid_views", "PC 曝光", "次"),
+            MetricSpec(
+                "ad_total",
+                "total_views",
+                "广告曝光",
+                "次",
+                note="采集位次：每游戏每小时在每个广告坑位出现计 1 次，不等于用户曝光量",
+            ),
+            MetricSpec("ad_app", "ad_views", "APP 曝光", "次", note="采集位次，每游戏每小时每个坑位计 1 次"),
+            MetricSpec("ad_pcebid", "pcebid_views", "PC 曝光", "次", note="资源互换位次，每游戏每小时每个坑位计 1 次"),
             MetricSpec("app_cnt", "app_cnt", "投放游戏数", "款"),
         ),
     ),
@@ -478,6 +486,8 @@ def _build_kpi(
         "insufficientHistory": len(available) < INSUFFICIENT_POINTS,
         # 前端可直接判断：本期有没有这个值（缺值不要显示 0）
         "hasValue": value is not None,
+        # 口径备注：只有需要解释的指标才有（如广告是位次而不是用户曝光）
+        **(({"note": spec.note}) if spec.note else {}),
     }
 
 
@@ -612,7 +622,7 @@ def _build_flags(
     """数据质量标记：前端拿来加角标 / 提示，不用自己算。"""
     flags: list[dict[str, Any]] = []
 
-    # 1) 概览表与在线周期表口径不一致（实测 W45 概览是旧快照）
+    # 1) 概览表与在线周期表口径不一致（两套统计池不同，不是旧快照：W45 概览偏大、W46 概览偏小）
     online_row = lines.get("online", {}).get(period_key) or {}
     overview_row = overview.get(period_key) or {}
     for column, label in (("online_peak_players", "在线峰值"), ("online_game_cnt", "在线游戏数")):
@@ -625,14 +635,17 @@ def _build_flags(
         if abs(from_overview - from_line) / base > OVERVIEW_TOLERANCE:
             flags.append(
                 {
-                    "level": "high",
+                    "level": "medium",
                     "item": f"{column}_mismatch",
-                    "label": f"{label}跨表不一致",
+                    "label": f"{label}跨表口径差异",
                     "detail": (
                         f"概览表 {int(from_overview):,} vs 在线周期表 {int(from_line):,}"
-                        f"（{period_key}），概览行为旧快照"
+                        f"（{period_key}）；两表统计池不同，不是同一份数据的旧快照"
                     ),
-                    "action": "本接口一律以业务线周期表为准，概览表只用于按游戏指标",
+                    "action": (
+                        "已定口径：在线类指标一律用在线周期表（本接口返回值），"
+                        "概览表仅用于「按游戏」指标"
+                    ),
                 }
             )
 
