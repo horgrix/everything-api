@@ -265,9 +265,12 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   "headline": {"reserveAdd": 1131061, "gameCnt": 162, "gameCntRoster": 163,
                "reserveTotalEnd": 69613606, "dailyAvg": 161580,
                "prevPeriodKey": "2026-45", "prevReserveAdd": 163381, "prevDayCnt": 1,
-               "prevDailyAvg": 163381, "dailyAvgPct": -1.1},
+               "prevExpectedDayCnt": 7, "prevDailyAvg": 163381,
+               "dailyAvgPct": -1.1, "dailyAvgComparable": false},
   "dist": [{"type": 0, "label": "商业游戏", "reserveAdd": 959971, "gameCnt": 110,
-            "gameCntRoster": 111, "share": 84.87, "hasData": true}, …],
+            "gameCntRoster": 111, "share": 84.87, "dayCnt": 7,
+            "firstDay": "2026-11-09", "lastDay": "2026-11-15", "partial": false,
+            "hasData": true}, …],
   "ranks": {"gain": [{"rankNo": 1, "appId": 43639, "appName": "白银之城", "icon": "…",
                       "distributionType": 0, "reserveAdd": 114809, "totalReserveCount": 2452558}],
             "total": [...]}
@@ -276,7 +279,13 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
 - `coverage.dayCnt` 是**真采到**的天数，`expectedDayCnt` 是期内到今天的天数（月报会出现 9/17），
   所以前端不用自己算期界；`partial` = 两者不等。
-- `dailyAvgPct` 只比日均、且上期真有采集天数才给，否则 `null`（前端写「上期无预约数据」）。
+- `dailyAvgPct` 只比日均。**本期没采满时不给数字**：`dailyAvgPct=null` + `dailyAvgBlocked="current_partial"`
+  （W47 只 1/2 天，拿它比 W46 的 7 天日均会写成「腰斩 —20.7%」，那个数不能出）；日平均本身照给。
+- `dailyAvgComparable`：本期与上期**都采满**才 true。上期未满时数照给（如 W46 对 W45 的 -1.1%），
+  但只能当参考，前端可配 `prevDayCnt` / `prevExpectedDayCnt` 标注「上期仅 1 天」。
+- `dist[].dayCnt / firstDay / lastDay / partial` 是**分型自己**的覆盖：Maker 这类新品类会上线得晚，
+  W46 是 4/7 天（11-12~11-15）。注意款数相加大于合计（110+52+1=163 vs 162，同一款可跨分型），
+  只有 `reserveAdd` 三项相加恒等于合计。
 - 预约**不进** `/periodic/periods` 的 `lines`：加进去会让选择器给 W40~W44 标「1 条线缺数据」。
 
 - **在线榜的样本信号**：每行带 `realHours`（该游戏本周期有有效在线的小时数，下载/广告榜为 `null`），  payload 带 `sample: {minRealHours, maxRealHours, medianRealHours, lowSample}`。

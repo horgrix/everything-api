@@ -845,3 +845,45 @@ def test_reserve_not_in_periods_lines(client):
     data = body["data"]
     assert set(data["insufficientHistory"]) == {"download", "ad", "online"}
     assert all("reserve" not in period["lines"] for period in data["periods"])
+
+
+def test_reserve_dist_carries_own_coverage(client):
+    """分型各自的覆盖天数（Maker 这类新品类会出现 4/7 天），款数不能相加。"""
+    reserve = _report(client)["data"]["reserve"]
+    dist = {item["type"]: item for item in reserve["dist"]}
+
+    assert dist[0]["dayCnt"] == 7 and dist[0]["partial"] is False
+    assert dist[0]["firstDay"] == "2026-11-09" and dist[0]["lastDay"] == "2026-11-15"
+    # Maker：11-12~11-15 才 4 天 → 前端显示「4/7 天」
+    assert dist[2]["dayCnt"] == 4
+    assert dist[2]["firstDay"] == "2026-11-12"
+    assert dist[2]["partial"] is True
+
+    # 款数相加大于合计（110+52+1=163 vs 162），只有新增量恒等
+    assert sum(item["gameCnt"] for item in reserve["dist"]) == 163
+    assert reserve["headline"]["gameCnt"] == 162
+    assert sum(item["reserveAdd"] for item in reserve["dist"]) == reserve["headline"]["reserveAdd"]
+
+
+def test_reserve_daily_avg_pct_blocked_when_current_partial(client, monkeypatch):
+    """本期没采满时不给日均环比：W47 只 1 天，拿它比 W46 的 7 天日均会「腰斩」。"""
+    from datetime import date
+
+    from app.routers import periodic
+
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 17))
+    w47 = periodic._build_reserve("weekly", "2026-47", "2026-46")
+
+    assert w47["coverage"]["dayCnt"] == 1
+    assert w47["coverage"]["expectedDayCnt"] == 2
+    assert w47["coverage"]["partial"] is True
+    assert w47["headline"]["dailyAvg"] == 128150          # 日均本身照给
+    assert w47["headline"]["dailyAvgPct"] is None          # 但不给环比
+    assert w47["headline"]["dailyAvgBlocked"] == "current_partial"
+    assert w47["headline"]["dailyAvgComparable"] is False
+
+    # W46 本期满 7 天：环比给数，但上期 W45 只 1/7 天 → 可比性为 false（数仅供参考）
+    w46 = periodic._build_reserve("weekly", "2026-46", "2026-45")
+    assert w46["headline"]["dailyAvgPct"] == pytest.approx(-1.1, abs=0.05)
+    assert w46["headline"]["prevExpectedDayCnt"] == 7
+    assert w46["headline"]["dailyAvgComparable"] is False

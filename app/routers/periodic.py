@@ -1366,10 +1366,24 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
         else None
     )
 
+    current_full = day_cnt >= expected_days
+    # 上期的「应有天数」要按**上期自己**算，不能拿本期的 7 去比 W45 的 1；
+    # 上期不在库里（月报、W40) 时为 None，一律当未满
+    prev_expected_days = _elapsed_days(period, prev_period) if prev_period else None
+    prev_full = bool(prev_day_cnt) and prev_expected_days is not None and (
+        prev_day_cnt >= prev_expected_days
+    )
+    # 本期还没采满（如 W47 只 1/2 天）时，日均环比拿「1 天 vs 7 天日均」比，
+    # 天然偏低（周末效应），那个数不能给：环比置 null，用 dailyAvgBlocked 说明原因。
+    # 上期未满（W46 对 W45 只 1 天）仍给数，但 dailyAvgComparable=false，让前端自己标「仅供参考」。
+    daily_avg_pct = _ratio(daily_avg, prev_daily_avg) if current_full else None
+    daily_avg_blocked = None if current_full else "current_partial"
+
     dist = []
     for dist_key in MAX_DIST_KEYS:
         row = current.get(dist_key) or {}
         add = _as_int(row.get("reserve_add"))
+        dist_days = _as_int(row.get("day_cnt"))
         dist.append(
             {
                 "type": int(dist_key),
@@ -1380,6 +1394,11 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
                 "share": (
                     round((add or 0) / reserve_add * 100, 2) if reserve_add and row else None
                 ),
+                # 分型自己的覆盖天数：Maker 等新品类上个周期才上线，会出现 4/7 天
+                "dayCnt": dist_days,
+                "firstDay": _as_text(row.get("first_day")),
+                "lastDay": _as_text(row.get("last_day")),
+                "partial": bool(dist_days is not None and dist_days < expected_days),
                 "hasData": bool(row),
             }
         )
@@ -1405,9 +1424,13 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
             "prevPeriodKey": prev_period,
             "prevReserveAdd": prev_add,
             "prevDayCnt": prev_day_cnt,
+            "prevExpectedDayCnt": prev_expected_days,
             "prevDailyAvg": prev_daily_avg,
-            # 只比日均：两期都真有采集天数才给，否则 null（前端写「上期无预约数据」）
-            "dailyAvgPct": _ratio(daily_avg, prev_daily_avg),
+            # 只比日均；本期未采满（current_partial）时不提供数字，避免「腰斩」误读
+            "dailyAvgPct": daily_avg_pct,
+            **(({"dailyAvgBlocked": daily_avg_blocked}) if daily_avg_blocked else {}),
+            # 两期都采满才算严格可比；否则数照给，但只能当参考
+            "dailyAvgComparable": daily_avg_pct is not None and prev_full,
         },
         "dist": dist,
         "distNote": RESERVE_DIST_NOTE,
