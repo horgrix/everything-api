@@ -863,11 +863,22 @@ def test_reserve_dist_carries_own_coverage(client):
     dist = {item["type"]: item for item in reserve["dist"]}
 
     assert dist[0]["dayCnt"] == 7 and dist[0]["partial"] is False
+    assert dist[0]["expectedDayCnt"] == 7
     assert dist[0]["firstDay"] == "2026-11-09" and dist[0]["lastDay"] == "2026-11-15"
     # Maker：11-12~11-15 才 4 天 → 前端显示「4/7 天」
     assert dist[2]["dayCnt"] == 4
+    assert dist[2]["expectedDayCnt"] == 7
     assert dist[2]["firstDay"] == "2026-11-12"
     assert dist[2]["partial"] is True
+
+    # 该分型这一期没有行时（W45 没有 Maker）：覆盖字段是 null，不是 false，
+    # 「partial:false」只能表示「有数据且采满」，不能拿来表示没数据
+    w45_dist = {item["type"]: item for item in _report(client, key="2026-45")["data"]["reserve"]["dist"]}
+    assert w45_dist[2]["hasData"] is False
+    assert w45_dist[2]["dayCnt"] is None
+    assert w45_dist[2]["expectedDayCnt"] is None
+    assert w45_dist[2]["partial"] is None
+    assert w45_dist[0]["partial"] is False          # 有数据、且 1/1 已采满
 
     # 款数相加大于合计（110+52+1=163 vs 162），只有新增量恒等
     assert sum(item["gameCnt"] for item in reserve["dist"]) == 163

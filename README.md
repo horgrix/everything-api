@@ -269,7 +269,7 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
                "prevExpectedDayCnt": 7, "prevDailyAvg": 163381,
                "dailyAvgBlocked": "prev_partial", "dailyAvgComparable": false},
   "dist": [{"type": 0, "label": "商业游戏", "reserveAdd": 959971, "gameCnt": 110,
-            "gameCntRoster": 111, "share": 84.87, "dayCnt": 7,
+            "gameCntRoster": 111, "share": 84.87, "dayCnt": 7, "expectedDayCnt": 7,
             "firstDay": "2026-11-09", "lastDay": "2026-11-15", "partial": false,
             "hasData": true}, …],
   "ranks": {"gain": [{"rankNo": 1, "appId": 43639, "appName": "白银之城", "icon": "…",
@@ -302,8 +302,9 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
   `dailyAvgComparable` 与 `dailyAvgPct is not None` **恒等**——不出现「布尔说不可比、数字却还在」的组合。
 - `prevDayCnt` / `prevExpectedDayCnt` 仍照给，便于前端写「上期仅覆盖 1/7 天」这种注解。
-- `dist[].dayCnt / firstDay / lastDay / partial` 是**分型自己**的覆盖：Maker 这类新品类会上线得晚，
-  W46 是 4/7 天（11-12~11-15）。注意款数相加大于合计（110+52+1=163 vs 162，同一款可跨分型），
+- `dist[].dayCnt / expectedDayCnt / firstDay / lastDay / partial` 是**分型自己**的覆盖：Maker 这类新品类会上线得晚，
+  W46 是 4/7 天（11-12~11-15）。该分型**这一期没有行**时这几个字段全部 `null`（不是 `false`）：
+  `partial:false` 只表示「有数据且采满」，拿去当「没数据」会把缺口藏掉。注意款数相加大于合计（110+52+1=163 vs 162，同一款可跨分型），
   只有 `reserveAdd` 三项相加恒等于合计。
 - 预约**不进** `/periodic/periods` 的 `lines`：加进去会让选择器给 W40~W44 标「1 条线缺数据」。
 

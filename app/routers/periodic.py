@@ -1423,11 +1423,14 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
                 "share": (
                     round((add or 0) / reserve_add * 100, 2) if reserve_add and row else None
                 ),
-                # 分型自己的覆盖天数：Maker 等新品类上个周期才上线，会出现 4/7 天
+                # 分型自己的覆盖天数：Maker 等新品类上个周期才上线，会出现 4/7 天。
+                # 该分型这一期根本没有行时，这几个字段全部 null（不是 false）——
+                # `partial:false` 的意思是「有数据且采满了」，拿去当「没数据」用会把缺口藏起来。
                 "dayCnt": dist_days,
+                "expectedDayCnt": expected_days if row else None,
                 "firstDay": _as_text(row.get("first_day")),
                 "lastDay": _as_text(row.get("last_day")),
-                "partial": bool(dist_days is not None and dist_days < expected_days),
+                "partial": (dist_days < expected_days) if dist_days is not None else None,
                 "hasData": bool(row),
             }
         )
