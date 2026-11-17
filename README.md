@@ -295,8 +295,8 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
                "firstDay": "2026-11-09", "lastDay": "2026-11-15"},
   "headline": {"reserveAdd": 1131061, "gameCnt": 162, "gameCntRoster": 163,
                "reserveTotalEnd": 69613606, "dailyAvg": 161580,
-               "prevPeriodKey": "2026-45", "prevReserveAdd": 163381, "prevDayCnt": 1,
-               "prevExpectedDayCnt": 7, "prevDailyAvg": 163381,
+               "prevPeriodKey": "2026-45", "prevReserveAdd": null, "prevDayCnt": 1,
+               "prevExpectedDayCnt": 7, "prevDailyAvg": null,
                "dailyAvgBlocked": "prev_partial", "dailyAvgComparable": false},
   "dist": [{"type": 0, "label": "商业游戏", "reserveAdd": 959971, "gameCnt": 110,
             "gameCntRoster": 111, "share": 84.87, "dayCnt": 7, "expectedDayCnt": 7,
@@ -331,7 +331,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   | `prev_partial` | 上期整期没采满 | W46 对 W45（1/7 天，周日单日对七天均值，「几乎持平」也是假象） |
 
   `dailyAvgComparable` 与 `dailyAvgPct is not None` **恒等**——不出现「布尔说不可比、数字却还在」的组合。
-- `prevDayCnt` / `prevExpectedDayCnt` 仍照给，便于前端写「上期仅覆盖 1/7 天」这种注解。
+- `prevDayCnt` / `prevExpectedDayCnt` / `prevPeriodKey` 仍照给，便于前端写「上期仅覆盖 1/7 天」这种注解。
+- **不可比时上期的数值也置空**：`dailyAvgBlocked` 非空时 `prevReserveAdd` / `prevDailyAvg` 都是 `null`。
+  原因是最朴素的消费方就是 `cur / prev - 1`，而 `1,131,061 / 163,381 - 1 = +592%` 读起来是个
+  完全合理的「暴涨」——这正是最初要避免的那个数。天数类元信息保留，句子照样拼得出来。
 - `dist[].dayCnt / expectedDayCnt / firstDay / lastDay / partial` 是**分型自己**的覆盖：Maker 这类新品类会上线得晚，
   W46 是 4/7 天（11-12~11-15）。该分型**这一期没有行**时这几个字段全部 `null`（不是 `false`）：
   `partial:false` 只表示「有数据且采满」，拿去当「没数据」会把缺口藏掉。注意款数相加大于合计（110+52+1=163 vs 162，同一款可跨分型），
