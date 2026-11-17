@@ -1093,3 +1093,35 @@ def test_online_rank_defaults_to_one_dimension(client):
     ).json()["data"]
     assert download["listType"] is None
     assert download["listTypes"] is None
+
+
+def test_reserve_daily_trend(client):
+    """预约逐日：与 lines[].daily 同形，day 是期内第几天，缺天不出点。"""
+    reserve = _report(client)["data"]["reserve"]
+    daily = reserve["daily"]
+
+    assert daily["unit"] == "次" and daily["metric"] == "reserve_add"
+    assert daily["summable"] is True          # 每日新增可相加（不像在线是各日峰值）
+    assert daily["distLabels"]["0"] == "商业游戏"
+
+    current = daily["current"]
+    assert current["periodKey"] == "2026-46"
+    assert [point["day"] for point in current["points"]] == [1, 2]     # 只有 11-09/11-10 有数
+    assert [point["date"] for point in current["points"]] == ["2026-11-09", "2026-11-10"]
+    assert current["points"][0]["total"] == 600000
+    assert current["points"][0]["dist"] == {"0": 500000, "1": 100000}
+    # 逐日之和 = 本期新增（与 headline 同源）
+    assert sum(point["total"] for point in current["points"]) == reserve["headline"]["reserveAdd"]
+
+    # 上期 W45 只有 11-08 一天 → day=7（期内第 7 天），虚线就一个点
+    previous = daily["previous"]
+    assert previous["periodKey"] == "2026-45"
+    assert [point["day"] for point in previous["points"]] == [7]
+    assert previous["points"][0]["total"] == 163381
+
+
+def test_reserve_unavailable_has_no_daily(client):
+    """没有覆盖的期连 daily 也不给，免得前端画一张空图。"""
+    reserve = _report(client, key="2026-44")["data"]["reserve"]
+    assert reserve["available"] is False
+    assert "daily" not in reserve

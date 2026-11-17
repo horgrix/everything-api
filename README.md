@@ -291,6 +291,15 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 | 跨期不能比总量（上线即退出池子，W46 期末 6,961 万 < W45 的 9,640 万） | 只有 `headline.dailyAvg` / `dailyAvgPct`（日均口径）；总量环比字段压根不存在 |
 | 分型款数各自去重，款数相加大于合计 | `dist[].gameCnt` 仅供分型内部看；`distNote` 随 payload 说明；只有 `reserveAdd` 三项相加恒等于合计 |
 
+`reserve.daily` 与 `lines[].daily` **完全同形**（`unit/metric/summable/distLabels/current/previous`），
+源表 `dws_taptap_reserve_v2_daily`（日增量 `reserve_count`）：
+
+- 已核 W46：分型累计 `959,971 / 171,001 / 89` 与周期表 dist 行相同，合计 `1,131,061 = reserveAdd`，
+  也就是「逐日之和 = 本期新增」成立；
+- `summable: true`（每日新增可相加），与在线「各日峰值」相反；
+- Maker 只有 11-12 起的 4 天 → 它的逐日点天然少几个，**不补齐**；
+- `available: false` 的期没有 `daily`（不画空图）。
+
 ```json
 "reserve": {
   "available": true, "coverageStart": "2026-11-08",

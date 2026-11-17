@@ -99,6 +99,11 @@ DAILY_SOURCES: dict[str, tuple[str, str, str, str]] = {
 # 且 max(每日) = 146354 = 周期表 peak_online_players —— 图上不会出现「日线高点高于期值」。
 # 用 v2_hourly 而不是 details：每小时一行（整周 84 行），不必把 860 款 × 84 小时的明细搬回来。
 ONLINE_HOURLY_TABLE = "dws_taptap_pc_online_peak_players_v2_hourly"
+
+# 预约逐日：按天 + 分型的日增量（reserve_count）。已核 W46 七天：
+# 分型累计 959,971 / 171,001 / 89 与周期表 dist 行完全相同，合计 1,131,061 = reserve_add；
+# Maker 只有 11-12 起的 4 天，所以它的逐日点天然比另两类少（不要补齐）。
+RESERVE_DAILY_TABLE = "dws_taptap_reserve_v2_daily"
 RESERVE_RANK_LIMIT = 50
 # 分型款数各自去重：期内换过分型的游戏会在多个分型里各算一次，所以款数相加 > 合计；
 # 只有 reserve_add 恒等于合计。这句话要跟前端/老板两边都对齐，直接随 payload 透出去
@@ -1475,9 +1480,48 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
             }
         )
 
+    # 逐日趋势：与 lines[].daily 同形（day 是期内第几天、缺天不出点、summable=true）
+    daily = None
+    try:
+        current_start, current_end = _daily_window(period, period_key)
+        previous_daily: dict[str, Any] = {"periodKey": None, "points": []}
+        if prev_period:
+            prev_start, prev_end = _daily_window(period, prev_period)
+            previous_daily = {
+                "periodKey": prev_period,
+                "start": prev_start.isoformat(),
+                "end": prev_end.isoformat(),
+                "points": _sum_daily_points(
+                    RESERVE_DAILY_TABLE, "reserve_count", prev_start, prev_end, prev_start
+                ),
+            }
+        daily = {
+            "unit": "次",
+            "metric": "reserve_add",
+            # 每日新增可以直接相加（113 万 = 7 天之和），与在线「各日峰值」不同
+            "summable": True,
+            "distLabels": DIST_LABELS,
+            "current": {
+                "periodKey": period_key,
+                "start": current_start.isoformat(),
+                "end": current_end.isoformat(),
+                "points": _sum_daily_points(
+                    RESERVE_DAILY_TABLE,
+                    "reserve_count",
+                    current_start,
+                    current_end,
+                    current_start,
+                ),
+            },
+            "previous": previous_daily,
+        }
+    except SqlExecutionError as exc:
+        logger.info("预约逐日趋势不可用：%s", exc)
+
     return {
         "available": True,
         "coverageStart": RESERVE_START,
+        **(({"daily": daily}) if daily else {}),
         "coverage": {
             # dayCnt 是该期**真的采到**的天数；expectedDayCnt 已按采集起点裁剪，
             # 所以月报是 9/9（不是 9/17），W45 是 1/1（不是 1/7）

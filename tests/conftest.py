@@ -698,6 +698,27 @@ def _seed() -> None:
                  "2026-11-12", "2026-11-16", None),
             ],
         )
+        # 预约逐日源表（日增量）：两天的分型累计正好等于上面的周期值
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_reserve_v2_daily (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                app_id INTEGER NOT NULL,
+                distribution_type INTEGER NULL,
+                reserve_count INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_reserve_v2_daily "
+            "(crawled_at, app_id, distribution_type, reserve_count) VALUES (?, ?, ?, ?)",
+            [
+                ("2026-11-09", 1, 0, 500000), ("2026-11-09", 2, 1, 100000),
+                ("2026-11-10", 1, 0, 459971), ("2026-11-10", 2, 1, 71090),
+                ("2026-11-08", 1, 0, 132827), ("2026-11-08", 2, 1, 30554),
+            ],
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_reserve_periodic_rank (
