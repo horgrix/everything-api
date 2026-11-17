@@ -778,6 +778,8 @@ def test_reserve_block_headline_and_dist(client):
         "dayCnt": 7,
         "expectedDayCnt": 7,
         "partial": False,
+        "startLimited": False,
+        "periodInProgress": False,
         "firstDay": "2026-11-09",
         "lastDay": "2026-11-15",
     }
@@ -821,11 +823,14 @@ def test_reserve_missing_coverage_is_not_zero(client, monkeypatch):
     assert "2026-11-08" in reserve["reason"]
     assert "headline" not in reserve and "dist" not in reserve
 
-    # 半覆盖的期：W45 只 1/7 天，日均环比仍给（两期都有采集），但 partial 要标出来
+    # 期初早于采集起点：W45 只能采 1 天（11-08），按裁剪后 1/1 算「采满」，
+    # 用 startLimited 标注「上线首周」，不能标成采集缺口
     w45 = _report(client, key="2026-45")["data"]["reserve"]
     assert w45["coverage"]["dayCnt"] == 1
-    assert w45["coverage"]["expectedDayCnt"] == 7
-    assert w45["coverage"]["partial"] is True
+    assert w45["coverage"]["expectedDayCnt"] == 1
+    assert w45["coverage"]["partial"] is False
+    assert w45["coverage"]["startLimited"] is True
+    assert w45["headline"]["dailyAvgBlocked"] == "prev_missing"
 
     # 月报 9/17 天：分母是「月内已过天数」，不是期长 30（夹具里没有月报 all 行，故直接调构建函数）
     from datetime import date
@@ -835,8 +840,11 @@ def test_reserve_missing_coverage_is_not_zero(client, monkeypatch):
     monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 17))
     monthly = periodic._build_reserve("monthly", "2026-11", None)
     assert monthly["coverage"]["dayCnt"] == 9
-    assert monthly["coverage"]["expectedDayCnt"] == 17
-    assert monthly["coverage"]["partial"] is True
+    # 按采集起点裁剪：11-08~昨天(11-16) = 9 天，不是 17，也不是整月 30
+    assert monthly["coverage"]["expectedDayCnt"] == 9
+    assert monthly["coverage"]["partial"] is False
+    assert monthly["coverage"]["startLimited"] is True
+    assert monthly["coverage"]["periodInProgress"] is True
     assert monthly["headline"]["dailyAvg"] == round(1422592 / 9)
     assert monthly["headline"]["dailyAvgPct"] is None       # 月报上期没有预约数据
 
@@ -877,11 +885,13 @@ def test_reserve_daily_avg_pct_blocked_when_current_partial(client, monkeypatch)
     w47 = periodic._build_reserve("weekly", "2026-47", "2026-46")
 
     assert w47["coverage"]["dayCnt"] == 1
-    assert w47["coverage"]["expectedDayCnt"] == 2
-    assert w47["coverage"]["partial"] is True
+    # 昨天(11-16) 就该有 1 天 → 采集没有缺口；未满的是「这一期还没走完」
+    assert w47["coverage"]["expectedDayCnt"] == 1
+    assert w47["coverage"]["partial"] is False
+    assert w47["coverage"]["periodInProgress"] is True
     assert w47["headline"]["dailyAvg"] == 128150          # 日均本身照给
     assert w47["headline"]["dailyAvgPct"] is None          # 但不给环比
-    assert w47["headline"]["dailyAvgBlocked"] == "current_partial"
+    assert w47["headline"]["dailyAvgBlocked"] == "current_in_progress"
     assert w47["headline"]["dailyAvgComparable"] is False
 
     # W46 本期满 7 天，但上期 W45 只 1/7 天：布尔与数字必须一致——都是「不可比」
@@ -898,6 +908,8 @@ def test_reserve_daily_avg_pct_blocked_when_current_partial(client, monkeypatch)
     assert none_prev["headline"]["dailyAvgPct"] is None
     assert none_prev["headline"]["dailyAvgBlocked"] == "prev_missing"
 
-    # 月报：本期本身只 9/17 天 → current_partial 优先（本期都没满，谈不上上期）
+    # 月报对 10 月：上期早于采集起点 → prev_missing 优先（比「本期进行中」更有用）
     monthly = periodic._build_reserve("monthly", "2026-11", "2026-10")
-    assert monthly["headline"]["dailyAvgBlocked"] == "current_partial"
+    assert monthly["headline"]["dailyAvgBlocked"] == "prev_missing"
+    assert monthly["headline"]["prevExpectedDayCnt"] == 31
+    assert monthly["headline"]["prevDayCnt"] is None

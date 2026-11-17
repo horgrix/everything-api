@@ -1251,12 +1251,27 @@ def _build_players(
     return players
 
 
-def _elapsed_days(period_type: str, key: str) -> int:
-    """该期内「到今天为止」已过多少天。给前端算「9/17 天」里的分母用，不让它自己算期界。"""
+def _reserve_expected_days(period_type: str, key: str) -> int:
+    """该期「到今天为止应该有多少天预约数据」——按**采集起点裁剪**。
+
+    不裁剪的话月报永远是 9/17 的「未采满」，而 11 月其实一天都没缺：采集 2026-11-08
+    才上线，11-01~11-07 那些天根本不存在可采的数据。裁剪后三种情况才分得开：
+      期初早于采集起点（只能采 N 天）· 已采满 · 真缺口（day_cnt < 裁剪后应采）。
+    """
+    start_text, end_text = _period_range(period_type, key)
+    start = max(date.fromisoformat(start_text), date.fromisoformat(RESERVE_START))
+    # 上界取「昨天」：今天的采集还没跑完，把今天算进去会把每期都误判成缺一天
+    end = min(date.fromisoformat(end_text), _today() - timedelta(days=1))
+    return max((end - start).days + 1, 0)
+
+
+def _period_days(period_type: str, key: str) -> int:
+    """该期的**日历长度**（周 = 7，月 = 28~31）。上期用这个当分母，
+    因为上期已经结束，「本来应该有几天」就是整期长度。"""
     start_text, end_text = _period_range(period_type, key)
     start = date.fromisoformat(start_text)
     end = date.fromisoformat(end_text)
-    return max((min(end, _today()) - start).days + 1, 0)
+    return (end - start).days + 1
 
 
 def _load_reserve_rows(
@@ -1354,7 +1369,12 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
         }
 
     reserve_add = _as_int(all_row.get("reserve_add"))
-    expected_days = _elapsed_days(period, period_key)
+    expected_days = _reserve_expected_days(period, period_key)
+    period_start_text, _period_end_text = _period_range(period, period_key)
+    # 期初早于采集起点：这几天永远不会有数据，不该标成「缺口」，也不该拿它当分母
+    start_limited = date.fromisoformat(period_start_text) < date.fromisoformat(RESERVE_START)
+    # 期还没走完（周中/月中）：日均不可比，但要和「采集缺口」分开说
+    in_progress = _is_partial(period, period_key)
     daily_avg = round(reserve_add / day_cnt) if reserve_add is not None and day_cnt else None
 
     prev_all = (grouped.get(prev_period) or {}).get("all") if prev_period else None
@@ -1366,24 +1386,23 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
         else None
     )
 
-    current_full = day_cnt >= expected_days
-    # 上期的「应有天数」要按**上期自己**算，不能拿本期的 7 去比 W45 的 1；
-    # 上期不在库里（月报、W40) 时为 None，一律当未满
-    prev_expected_days = _elapsed_days(period, prev_period) if prev_period else None
-    prev_full = bool(prev_day_cnt) and prev_expected_days is not None and (
-        prev_day_cnt >= prev_expected_days
-    )
-    # 日均环比只在「两期都采满」时才给。只要有一边不满就一直 null，并用
-    # dailyAvgBlocked 说明是哪一边：一个说「不可比」却同时给出数字的字段，
+    # 上期的分母是**整期日历天数**（已结束的期，本来就应该有多少天），不裁剪；
+    # 拿裁剪后的 1 去比 W45 的 1 天，会把「周日单日」当成整周而误判为可比
+    prev_days = _period_days(period, prev_period) if prev_period else None
+    # 日均环比只在「本期已结束且采满、上期整期采满」时给。只要有一边不成立就一直 null，
+    # 并用 dailyAvgBlocked 说明是哪一边：一个说「不可比」却同时给出数字的字段，
     # 下一个消费方（导出、脚本）一定会直接读那个数字。
-    #   current_partial  W47 只 1/2 天：1 天对 7 天日均，周末效应冒充腰斩
-    #   prev_partial     W46 对 W45 只 1/7 天：周日单日对七天均值，看着「几乎持平」也是骗人
-    #   prev_missing     月报 11 对 10 月：上期早于采集起点，根本没有分母
-    if not current_full:
-        daily_avg_blocked = "current_partial"
-    elif not prev_day_cnt:
+    #   prev_missing         月报 11 对 10 月：上期早于采集起点，根本没分母
+    #   current_in_progress  W47 只 1 天（1 天对 7 天均值，周末效应冒充腰斩）
+    #   current_partial      本期采集真缺天（这才该标黄）
+    #   prev_partial         W46 对 W45：上期只 1/7 天，周日单日对七天均值
+    if not prev_day_cnt:
         daily_avg_blocked = "prev_missing"
-    elif not prev_full:
+    elif in_progress:
+        daily_avg_blocked = "current_in_progress"
+    elif day_cnt < expected_days:
+        daily_avg_blocked = "current_partial"
+    elif prev_days is not None and prev_day_cnt < prev_days:
         daily_avg_blocked = "prev_partial"
     else:
         daily_avg_blocked = None
@@ -1417,10 +1436,16 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
         "available": True,
         "coverageStart": RESERVE_START,
         "coverage": {
-            # dayCnt 是该期**真的采到**的天数，不是期长；月报会出现 9/17 这种半覆盖
+            # dayCnt 是该期**真的采到**的天数；expectedDayCnt 已按采集起点裁剪，
+            # 所以月报是 9/9（不是 9/17），W45 是 1/1（不是 1/7）
             "dayCnt": day_cnt,
             "expectedDayCnt": expected_days,
+            # 真缺口：day_cnt < 裁剪后应采（这才该标黄）
             "partial": day_cnt < expected_days,
+            # 期初早于采集起点：那几天永远不会有数据，文案应写「上线首周/采集起点前无数据」
+            "startLimited": start_limited,
+            # 期还没走完：页面标「进行中」，与「采集缺口」是两件事
+            "periodInProgress": in_progress,
             "firstDay": _as_text(all_row.get("first_day")),
             "lastDay": _as_text(all_row.get("last_day")),
         },
@@ -1434,7 +1459,7 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
             "prevPeriodKey": prev_period,
             "prevReserveAdd": prev_add,
             "prevDayCnt": prev_day_cnt,
-            "prevExpectedDayCnt": prev_expected_days,
+            "prevExpectedDayCnt": prev_days,
             "prevDailyAvg": prev_daily_avg,
             # 两期都采满才出数；否则 null，用 dailyAvgBlocked 区分是哪一边
             "dailyAvgPct": daily_avg_pct,

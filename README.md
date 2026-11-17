@@ -261,6 +261,7 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 "reserve": {
   "available": true, "coverageStart": "2026-11-08",
   "coverage": {"dayCnt": 7, "expectedDayCnt": 7, "partial": false,
+               "startLimited": false, "periodInProgress": false,
                "firstDay": "2026-11-09", "lastDay": "2026-11-15"},
   "headline": {"reserveAdd": 1131061, "gameCnt": 162, "gameCntRoster": 163,
                "reserveTotalEnd": 69613606, "dailyAvg": 161580,
@@ -277,15 +278,27 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 }
 ```
 
-- `coverage.dayCnt` 是**真采到**的天数，`expectedDayCnt` 是期内到今天的天数（月报会出现 9/17），
-  所以前端不用自己算期界；`partial` = 两者不等。
+- `coverage.dayCnt` 是**真采到**的天数，`expectedDayCnt` 是**按采集起点裁剪后**到昨天应有的天数：
+  `max(期初, 2026-11-08) ~ min(期末, 昨天)`。不裁剪的话月报永远是「9/17 未采满」，而 11 月
+  一天都没缺——11-01~11-07 那些天根本没有可采的数据。三种情况因此分得开：
+
+  | 情形 | 字段 | 例 |
+  |---|---|---|
+  | 期初早于采集起点 | `startLimited: true` + `dayCnt`（分母已被裁剪） | W45 = 1/1 天（写「上线首周」）；月报 = 9/9 天 |
+  | 期还没走完 | `periodInProgress: true` | W47（只 1 天，日均不可比） |
+  | 真缺口 | `partial: true`（`dayCnt < expectedDayCnt`） | 采集漏了一天才算，这才该标黄 |
+
+- **上期的分母不裁剪**：`prevExpectedDayCnt` 是上期的整期日历天数（周 7 / 月 28~31），
+  所以 W46 对 W45 仍是「上期仅覆盖 1/7 天」，不会因为裁剪成 1/1 就误判成可比。上期没有数据时
+  `prevDayCnt` 是 `null`（不是 0），文案走「上期无预约数据」。
 - `dailyAvgPct` **只在两期都采满时才有数字**，否则一律 `null`，并用 `dailyAvgBlocked` 说明是哪一边：
 
   | `dailyAvgBlocked` | 含义 | 例 |
   |---|---|---|
-  | `current_partial` | 本期没采满，日平均身照给、环比不给 | W47 只 1/2 天（1 天对 7 天均值会是「腰斩 -20.7%」） |
-  | `prev_partial` | 上期没采满 | W46 对 W45（1/7 天，周日单日对七天均值，「几乎持平」也是假象） |
-  | `prev_missing` | 上期早于采集起点，没有分母（`prevDayCnt` 是 `null` 不是 0） | 月末对上个月 |
+  | `prev_missing` | 上期早于采集起点，没有分母（`prevDayCnt` 是 `null` 不是 0） | 月报 11 对 10 月 |
+  | `current_in_progress` | 本期还没走完 | W47 只 1 天（1 天对 7 天均值会是「腰斩 -20.7%」） |
+  | `current_partial` | 本期采集真缺天 | 漏采一天 |
+  | `prev_partial` | 上期整期没采满 | W46 对 W45（1/7 天，周日单日对七天均值，「几乎持平」也是假象） |
 
   `dailyAvgComparable` 与 `dailyAvgPct is not None` **恒等**——不出现「布尔说不可比、数字却还在」的组合。
 - `prevDayCnt` / `prevExpectedDayCnt` 仍照给，便于前端写「上期仅覆盖 1/7 天」这种注解。
