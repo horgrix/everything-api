@@ -135,37 +135,50 @@ def test_report_does_not_turn_missing_value_into_zero(client):
     assert bad.status_code == 400
 
 
-def test_rank_dedupes_and_limits(client):
-    body = client.get(
-        f"{PREFIX}/rank",
-        params={
-            "line": "download",
-            "period": "monthly",
-            "key": "2026-11",
-            "category": "top",
-            "limit": 5,
-        },
-    ).json()
-    data = body["data"]
+def test_rank_dedupes_and_limits(client, monkeypatch):
+    """榜单去重 / 分型过滤。用「11 月已结束」的日期跑，避免撞上「进行中不出环比」的规则。"""
+    from datetime import date
 
-    assert data["periodKey"] == "2026-11"
-    assert data["unit"] == "次"
-    assert len(data["items"]) == 5
-    # 同 (rank_no, app_id) 的重跑残留行被去重，且不影响 limit
-    assert data["availableRows"] == 6
-    assert [item["rankNo"] for item in data["items"]] == [1, 2, 3, 4, 5]
-    assert data["items"][0]["appName"] == "柚松屋"
-    assert data["items"][0]["distributionLabel"] == "商业游戏"
-    assert data["items"][1]["diff"] == -1381013
+    from app.routers import periodic
 
-    filtered = client.get(
-        f"{PREFIX}/rank",
-        params={"line": "download", "period": "monthly", "key": "2026-11", "dist": "1"},
-    ).json()["data"]
-    assert {item["distributionType"] for item in filtered["items"]} == {1}
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 12, 5))
+    periodic._CACHE.clear()
+    try:
+        body = client.get(
+            f"{PREFIX}/rank",
+            params={
+                "line": "download",
+                "period": "monthly",
+                "key": "2026-11",
+                "category": "top",
+                "limit": 5,
+            },
+        ).json()
+        data = body["data"]
+    except Exception:
+        periodic._CACHE.clear()
+        raise
 
-    unknown = client.get(f"{PREFIX}/rank", params={"line": "nope"})
-    assert unknown.status_code == 400
+        assert data["periodKey"] == "2026-11"
+        assert data["unit"] == "次"
+        assert len(data["items"]) == 5
+        # 同 (rank_no, app_id) 的重跑残留行被去重，且不影响 limit
+        assert data["availableRows"] == 6
+        assert [item["rankNo"] for item in data["items"]] == [1, 2, 3, 4, 5]
+        assert data["items"][0]["appName"] == "柚松屋"
+        assert data["items"][0]["distributionLabel"] == "商业游戏"
+        assert data["items"][1]["diff"] == -1381013        # 期已结束：差额照给
+
+        filtered = client.get(
+            f"{PREFIX}/rank",
+            params={"line": "download", "period": "monthly", "key": "2026-11", "dist": "1"},
+        ).json()["data"]
+        assert {item["distributionType"] for item in filtered["items"]} == {1}
+
+        unknown = client.get(f"{PREFIX}/rank", params={"line": "nope"})
+        assert unknown.status_code == 400
+    finally:
+        periodic._CACHE.clear()
 
 
 def test_report_labels_and_kpi_notes(client):
@@ -665,6 +678,8 @@ def test_in_progress_period_has_no_delta_pct(client, monkeypatch):
             assert line["breakdown"]["deltaBlocked"] == "current_in_progress"
             for item in line["breakdown"]["items"]:
                 assert item["deltaPct"] is None
+                # prevValue 也必须空：否则一除就是同一个假跌幅（运维在线上抓到的那处）
+                assert item["prevValue"] is None
 
         # 下载线的 KPI 一定是「进行中」这个原因（它上期是整周 W45）
         download = next(line for line in payload["lines"] if line["key"] == "download")
@@ -678,6 +693,8 @@ def test_in_progress_period_has_no_delta_pct(client, monkeypatch):
         for item in body["data"]["items"]:
             assert item["diffPct"] is None
             assert item["diffBlocked"] == "current_in_progress"
+            assert item["prevValue"] is None      # 同理：上期值与差额也一并置空
+            assert item["diff"] is None
     finally:
         # 用例内部的 payload 是按假「今天」算的，别让它污染后面的用例
         periodic._CACHE.clear()

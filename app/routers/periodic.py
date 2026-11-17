@@ -1174,8 +1174,13 @@ def _build_breakdown(
 
     for item in items:
         item["share"] = round(item["value"] / total, 4) if total else None
-        # 本期还没走完时分型环比同样不可比：与 KPI 的 deltaBlocked 同词、同做法
-        item["deltaPct"] = None if is_partial else _ratio(item["value"], item["prevValue"])
+        # 本期还没走完时分型环比同样不可比：与 KPI 的 deltaBlocked 同词、同做法。
+        # prevValue 必须一起置空——只清 deltaPct 的话，消费方自己一除就是同一个假跌幅
+        if is_partial:
+            item["prevValue"] = None
+            item["deltaPct"] = None
+        else:
+            item["deltaPct"] = _ratio(item["value"], item["prevValue"])
         # 逐期值（与 KPI 的 trend 同形）：前端画「小游戏下载量趋势」这类分型曲线时
         # 不必再逐期打 /report（八期就是八次请求）。缺行的期不补 0，直接不出现。
         item["trend"] = [
@@ -2255,6 +2260,10 @@ def rank(
         value = _as_number(row.get("value"))
         prev_value = _as_number(row.get("prev_value"))
         diff_value = _as_number(row.get("diff_value"))
+        if period_partial:
+            # 与 diffPct 同步：上期值与差额也是「1 天 vs 整周」的假数字，别留着让人自己减
+            prev_value = None
+            diff_value = None
         items.append(
             {
                 "rankNo": mark[0],
