@@ -549,6 +549,91 @@ def _seed() -> None:
             "WHERE week_key = '2026-46'"
         )
 
+        # 预约报表（DWS 2026-11-16 落库，采集 2026-11-08 才有）：W45 只 1 天、W46 满周、月报 9/17 天
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_reserve_periodic_report (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                category_type TEXT NOT NULL,
+                category_value TEXT NOT NULL,
+                reserve_add INTEGER NULL,
+                reserve_game_cnt INTEGER NULL,
+                reserve_game_cnt_roster INTEGER NULL,
+                reserve_total_end INTEGER NULL,
+                day_cnt INTEGER NULL,
+                first_day TEXT NULL,
+                last_day TEXT NULL,
+                updated_at TEXT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_reserve_periodic_report "
+            "(period_type, crawled_at, category_type, category_value, reserve_add, "
+            " reserve_game_cnt, reserve_game_cnt_roster, reserve_total_end, day_cnt, "
+            " first_day, last_day, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-45", "all", "ALL", 163381, 199, 200, 96404047, 1,
+                 "2026-11-08", "2026-11-08", "2026-11-16 09:00:00"),
+                ("weekly", "2026-45", "dist", "0", 132827, 124, 125, 61496318, 1,
+                 "2026-11-08", "2026-11-08", None),
+                ("weekly", "2026-45", "dist", "1", 30554, 75, 75, 34907729, 1,
+                 "2026-11-08", "2026-11-08", None),
+                ("weekly", "2026-46", "all", "ALL", 1131061, 162, 163, 69613606, 7,
+                 "2026-11-09", "2026-11-15", "2026-11-17 09:00:00"),
+                ("weekly", "2026-46", "dist", "0", 959971, 110, 111, 49034036, 7,
+                 "2026-11-09", "2026-11-15", None),
+                ("weekly", "2026-46", "dist", "1", 171001, 52, 52, 20579277, 7,
+                 "2026-11-09", "2026-11-15", None),
+                ("weekly", "2026-46", "dist", "2", 89, 1, 1, 293, 4,
+                 "2026-11-12", "2026-11-15", None),
+                ("monthly", "2026-11", "all", "ALL", 1422592, 200, 201, 69613606, 9,
+                 "2026-11-08", "2026-11-16", "2026-11-17 09:00:00"),
+                ("monthly", "2026-11", "dist", "0", 1202710, 140, 141, 49034036, 9,
+                 "2026-11-08", "2026-11-16", None),
+                ("monthly", "2026-11", "dist", "1", 219767, 60, 60, 20579277, 9,
+                 "2026-11-08", "2026-11-16", None),
+                ("monthly", "2026-11", "dist", "2", 115, 1, 1, 293, 5,
+                 "2026-11-12", "2026-11-16", None),
+            ],
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_reserve_periodic_rank (
+                id INTEGER PRIMARY KEY,
+                period_type TEXT NOT NULL,
+                crawled_at TEXT NOT NULL,
+                list_type TEXT NOT NULL,
+                rank_type TEXT NOT NULL,
+                rank_no INTEGER NOT NULL,
+                app_id INTEGER NOT NULL,
+                app_name TEXT NULL,
+                icon TEXT NULL,
+                distribution_type INTEGER NULL,
+                reserve_add INTEGER NULL,
+                total_reserve_count INTEGER NULL,
+                updated_at TEXT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_reserve_periodic_rank "
+            "(period_type, crawled_at, list_type, rank_type, rank_no, app_id, app_name, "
+            " icon, distribution_type, reserve_add, total_reserve_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("weekly", "2026-46", "all", "gain", 1, 43639, "白银之城",
+                 "https://img-tc.tapimg.com/gain-43639.jpg", 0, 114809, 2452558),
+                ("weekly", "2026-46", "all", "gain", 2, 730674, "第二款",
+                 None, 0, 62032, 3055517),
+                ("weekly", "2026-46", "all", "total", 1, 777320, "累计第一",
+                 "https://img-tc.tapimg.com/total-777320.jpg", 1, 5000, 9900000),
+            ],
+        )
+
         # 访问统计表（MySQL 侧见 sql/visit_event.sql，这里放 SQLite 等价结构）
         conn.execute(
             """

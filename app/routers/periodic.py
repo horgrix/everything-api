@@ -69,6 +69,19 @@ DIST_LABELS = {"0": "商业游戏", "1": "独立小游戏", "2": "Maker 小游�
 UNKNOWN_DIST = "未分类"
 MAX_DIST_KEYS = ("0", "1", "2")
 
+# 预约：DWS 2026-11-16 落库（数据从 11-08 才有，更早的期永久补不回来）。
+# 键列叫 `crawled_at`（不是 period_key），分型行 category_value 是 '0'/'1'/'2' 字符串。
+RESERVE_TABLE = "dws_taptap_reserve_periodic_report"
+RESERVE_RANK_TABLE = "dws_taptap_reserve_periodic_rank"
+RESERVE_START = "2026-11-08"
+RESERVE_RANK_LIMIT = 50
+# 分型款数各自去重：期内换过分型的游戏会在多个分型里各算一次，所以款数相加 > 合计；
+# 只有 reserve_add 恒等于合计。这句话要跟前端/老板两边都对齐，直接随 payload 透出去
+RESERVE_DIST_NOTE = (
+    "分型款数按分型各自去重，期内换过分型会算进多个分型，款数相加大于合计；"
+    "新增预约量不受影响，三项相加恒等于合计"
+)
+
 # 已下线、不再产出的列：接口不取，也不给前端预留位置
 RETIRED_COLUMNS = (
     "online_peak_pc",
@@ -1238,6 +1251,171 @@ def _build_players(
     return players
 
 
+def _elapsed_days(period_type: str, key: str) -> int:
+    """该期内「到今天为止」已过多少天。给前端算「9/17 天」里的分母用，不让它自己算期界。"""
+    start_text, end_text = _period_range(period_type, key)
+    start = date.fromisoformat(start_text)
+    end = date.fromisoformat(end_text)
+    return max((min(end, _today()) - start).days + 1, 0)
+
+
+def _load_reserve_rows(
+    period_type: str, keys: list[str]
+) -> dict[str, dict[str, dict[str, Any]]] | None:
+    """预约报表行 → {期: {"all"|分型: row}}。表不可用时返回 None（不是空字典）。"""
+    if not keys:
+        return {}
+    quoted = ", ".join(f"'{key}'" for key in keys)
+    sql = f"""
+        SELECT crawled_at, category_type, category_value, reserve_add,
+               reserve_game_cnt, reserve_game_cnt_roster, reserve_total_end,
+               day_cnt, first_day, last_day, updated_at
+          FROM {RESERVE_TABLE}
+         WHERE period_type = '{period_type}' AND crawled_at IN ({quoted})
+    """
+    try:
+        rows = _query(sql)
+    except SqlExecutionError as exc:
+        logger.info("预约报表不可用：%s", exc)
+        return None
+    grouped: dict[str, dict[str, dict[str, Any]]] = {key: {} for key in keys}
+    for row in rows:
+        period = str(row.get("crawled_at") or "").strip()
+        if period not in grouped:
+            continue
+        category = str(row.get("category_type") or "").strip()
+        slot = "all" if category == "all" else str(row.get("category_value") or "").strip()
+        grouped[period][slot] = row
+    return grouped
+
+
+def _load_reserve_ranks(period_type: str, period_key: str) -> dict[str, list[dict[str, Any]]]:
+    """预约双榜（gain=本期新增，total=期末池子累计）。取不到就两份都空。"""
+    sql = f"""
+        SELECT rank_type, rank_no, app_id, app_name, icon, distribution_type,
+               reserve_add, total_reserve_count
+          FROM {RESERVE_RANK_TABLE}
+         WHERE period_type = '{period_type}' AND crawled_at = '{period_key}'
+         ORDER BY rank_type, rank_no
+         LIMIT {RESERVE_RANK_LIMIT * 2}
+    """
+    try:
+        rows = _query(sql, max_rows=RESERVE_RANK_LIMIT * 2)
+    except SqlExecutionError as exc:
+        logger.info("预约榜单不可用：%s", exc)
+        return {"gain": [], "total": []}
+    ranks: dict[str, list[dict[str, Any]]] = {"gain": [], "total": []}
+    for row in rows:
+        rank_type = str(row.get("rank_type") or "").strip()
+        if rank_type not in ranks:
+            continue
+        ranks[rank_type].append(
+            {
+                "rankNo": _as_int(row.get("rank_no")),
+                "appId": _as_int(row.get("app_id")),
+                "appName": _as_text(row.get("app_name")),
+                "icon": _as_text(row.get("icon")),
+                "distributionType": _as_int(row.get("distribution_type")),
+                "reserveAdd": _as_int(row.get("reserve_add")),
+                "totalReserveCount": _as_int(row.get("total_reserve_count")),
+            }
+        )
+    return {key: items[:RESERVE_RANK_LIMIT] for key, items in ranks.items()}
+
+
+def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dict[str, Any]:
+    """07 预约：本期新增 / 日均 / 分型 / 双榜。
+
+    三条硬约束（都写在返回值里，不靠文档默契）：
+      1. 只有 11-08 起的期才有数据，不给就不装（早期回 available=false 带原因）；
+      2. 跨期**不可比总量**（上线即退出池子，W46 期末 6,961 万 < W45 的 9,640 万），
+         所以只提供日均及其环比，总量环比不参与计算；
+      3. 分型款数各自去重，款数相加 > 合计，只有新增量相加等于合计。
+    """
+    grouped = _load_reserve_rows(period, [k for k in (period_key, prev_period) if k])
+    if grouped is None:
+        return {
+            "available": False,
+            "coverageStart": RESERVE_START,
+            "reason": "预约报表不可用（表未就绪或查询失败），本期不展示预约数据",
+        }
+
+    current = grouped.get(period_key) or {}
+    all_row = current.get("all")
+    day_cnt = _as_int(all_row.get("day_cnt")) if all_row else None
+    if all_row is None or not day_cnt:
+        return {
+            "available": False,
+            "coverageStart": RESERVE_START,
+            "reason": (
+                f"预约采集 {RESERVE_START} 才上线（上游小时表只保留约 2 天，早期期永久补不回来），"
+                f"本期没有可用预约数据"
+            ),
+        }
+
+    reserve_add = _as_int(all_row.get("reserve_add"))
+    expected_days = _elapsed_days(period, period_key)
+    daily_avg = round(reserve_add / day_cnt) if reserve_add is not None and day_cnt else None
+
+    prev_all = (grouped.get(prev_period) or {}).get("all") if prev_period else None
+    prev_add = _as_int(prev_all.get("reserve_add")) if prev_all else None
+    prev_day_cnt = _as_int(prev_all.get("day_cnt")) if prev_all else None
+    prev_daily_avg = (
+        round(prev_add / prev_day_cnt)
+        if prev_add is not None and prev_day_cnt
+        else None
+    )
+
+    dist = []
+    for dist_key in MAX_DIST_KEYS:
+        row = current.get(dist_key) or {}
+        add = _as_int(row.get("reserve_add"))
+        dist.append(
+            {
+                "type": int(dist_key),
+                "label": DIST_LABELS[dist_key],
+                "reserveAdd": add,
+                "gameCnt": _as_int(row.get("reserve_game_cnt")),
+                "gameCntRoster": _as_int(row.get("reserve_game_cnt_roster")),
+                "share": (
+                    round((add or 0) / reserve_add * 100, 2) if reserve_add and row else None
+                ),
+                "hasData": bool(row),
+            }
+        )
+
+    return {
+        "available": True,
+        "coverageStart": RESERVE_START,
+        "coverage": {
+            # dayCnt 是该期**真的采到**的天数，不是期长；月报会出现 9/17 这种半覆盖
+            "dayCnt": day_cnt,
+            "expectedDayCnt": expected_days,
+            "partial": day_cnt < expected_days,
+            "firstDay": _as_text(all_row.get("first_day")),
+            "lastDay": _as_text(all_row.get("last_day")),
+        },
+        "headline": {
+            "reserveAdd": reserve_add,
+            "gameCnt": _as_int(all_row.get("reserve_game_cnt")),
+            "gameCntRoster": _as_int(all_row.get("reserve_game_cnt_roster")),
+            # 期末池子累计：只反映「这一期末还剩多少待上线」，与上期不可相减
+            "reserveTotalEnd": _as_int(all_row.get("reserve_total_end")),
+            "dailyAvg": daily_avg,
+            "prevPeriodKey": prev_period,
+            "prevReserveAdd": prev_add,
+            "prevDayCnt": prev_day_cnt,
+            "prevDailyAvg": prev_daily_avg,
+            # 只比日均：两期都真有采集天数才给，否则 null（前端写「上期无预约数据」）
+            "dailyAvgPct": _ratio(daily_avg, prev_daily_avg),
+        },
+        "dist": dist,
+        "distNote": RESERVE_DIST_NOTE,
+        "ranks": _load_reserve_ranks(period, period_key),
+        "updatedAt": _iso_timestamp(all_row.get("updated_at")),
+    }
+
+
 def _build_flags(
     period_key: str,
     lines: dict[str, dict[str, dict[str, Any]]],
@@ -1687,6 +1865,8 @@ def report(
         "coreKpis": core,
         "lines": line_payloads,
         "players": _build_players(overview, period_key, window),
+        # 07 预约（2026-11-08 才上线；无覆盖的期回 available=false，不拿 0 充数）
+        "reserve": _build_reserve(period, period_key, prev_period),
         # 数据质量标记（缺值、跨表不一致、未归类、异常放量）
         "flags": _build_flags(
             period_key, lines, overview, breakdowns, line_kpis, coverage_notes

@@ -245,8 +245,41 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   一律输出 `null`。下载榜仍有 82 行（W41~W44 已下线/从未采到）无 icon，前端保留首字兜底。
 - **重点游戏带真图**：`players[].icon` / `players[].appId`，来自概览表
   `torchlight_icon` / `torchlight_app_id` / `heartopia_*`（后加列，列不存在或该期无值时为 `null`）。
-- **在线榜的样本信号**：每行带 `realHours`（该游戏本周期有有效在线的小时数，下载/广告榜为 `null`），
-  payload 带 `sample: {minRealHours, maxRealHours, medianRealHours, lowSample}`。
+
+**预约 `reserve`（顶层块，跟报告一起返回）**
+
+数据来自 `dws_taptap_reserve_periodic_report` / `..._rank`（键列是 `crawled_at`，不是
+`period_key`）。三条硬约束写在返回体里，不靠文档默契：
+
+| 约束 | 返回体里怎么看 |
+|------|----------------|
+| 采集 2026-11-08 才上线，早期期永久补不回来 | 无覆盖的期回 `{"available": false, "reason": "…"}`，**字段不存在**，不会给 0 |
+| 跨期不能比总量（上线即退出池子，W46 期末 6,961 万 < W45 的 9,640 万） | 只有 `headline.dailyAvg` / `dailyAvgPct`（日均口径）；总量环比字段压根不存在 |
+| 分型款数各自去重，款数相加大于合计 | `dist[].gameCnt` 仅供分型内部看；`distNote` 随 payload 说明；只有 `reserveAdd` 三项相加恒等于合计 |
+
+```json
+"reserve": {
+  "available": true, "coverageStart": "2026-11-08",
+  "coverage": {"dayCnt": 7, "expectedDayCnt": 7, "partial": false,
+               "firstDay": "2026-11-09", "lastDay": "2026-11-15"},
+  "headline": {"reserveAdd": 1131061, "gameCnt": 162, "gameCntRoster": 163,
+               "reserveTotalEnd": 69613606, "dailyAvg": 161580,
+               "prevPeriodKey": "2026-45", "prevReserveAdd": 163381, "prevDayCnt": 1,
+               "prevDailyAvg": 163381, "dailyAvgPct": -1.1},
+  "dist": [{"type": 0, "label": "商业游戏", "reserveAdd": 959971, "gameCnt": 110,
+            "gameCntRoster": 111, "share": 84.87, "hasData": true}, …],
+  "ranks": {"gain": [{"rankNo": 1, "appId": 43639, "appName": "白银之城", "icon": "…",
+                      "distributionType": 0, "reserveAdd": 114809, "totalReserveCount": 2452558}],
+            "total": [...]}
+}
+```
+
+- `coverage.dayCnt` 是**真采到**的天数，`expectedDayCnt` 是期内到今天的天数（月报会出现 9/17），
+  所以前端不用自己算期界；`partial` = 两者不等。
+- `dailyAvgPct` 只比日均、且上期真有采集天数才给，否则 `null`（前端写「上期无预约数据」）。
+- 预约**不进** `/periodic/periods` 的 `lines`：加进去会让选择器给 W40~W44 标「1 条线缺数据」。
+
+- **在线榜的样本信号**：每行带 `realHours`（该游戏本周期有有效在线的小时数，下载/广告榜为 `null`），  payload 带 `sample: {minRealHours, maxRealHours, medianRealHours, lowSample}`。
   判定为 **`medianRealHours < 8`（严格小于）**，量的是「榜内单条数据够不够厚」：
   W46 `dist_1` / `dist_2` 中位数 4.5 / 4 → 低样本；W46 `dist_0` 中位数 84 → 正常。
   W45 `dist_0` 中位数正好 8.0 → 不判低样本：它是高区分度的商业榜，那一周只是覆盖只有 8 小时，

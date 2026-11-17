@@ -766,3 +766,82 @@ def test_breakdown_trend_flags_partial_period():
     ]
     # 46 期没有 "2" 的分型行：该点在 trend 里直接不出现，不补一个 0 造出断崖
     assert [point["period"] for point in items["2"]["trend"]] == ["2026-45"]
+
+
+def test_reserve_block_headline_and_dist(client):
+    """07 预约：新增 / 日均 / 分型 / 双榜，结构与前端契约一致。"""
+    payload = _report(client)["data"]
+    reserve = payload["reserve"]
+
+    assert reserve["available"] is True
+    assert reserve["coverage"] == {
+        "dayCnt": 7,
+        "expectedDayCnt": 7,
+        "partial": False,
+        "firstDay": "2026-11-09",
+        "lastDay": "2026-11-15",
+    }
+    head = reserve["headline"]
+    assert head["reserveAdd"] == 1131061
+    assert head["gameCnt"] == 162 and head["gameCntRoster"] == 163
+    assert head["reserveTotalEnd"] == 69613606
+    assert head["dailyAvg"] == round(1131061 / 7)
+    assert head["prevPeriodKey"] == "2026-45"
+    assert head["prevDayCnt"] == 1
+    # 只比日均：163,381/1 → 161,580/日，-1.1%
+    assert head["dailyAvgPct"] == pytest.approx(-1.1, abs=0.05)
+
+    # 分型三项固定输出，新增量相加恒等于合计（款数不可加，另有 distNote 说明）
+    assert [item["type"] for item in reserve["dist"]] == [0, 1, 2]
+    assert sum(item["reserveAdd"] for item in reserve["dist"]) == head["reserveAdd"]
+    assert reserve["dist"][0]["share"] == pytest.approx(84.87, abs=0.01)
+    assert reserve["dist"][2]["gameCnt"] == 1
+    assert "款数相加大于合计" in reserve["distNote"]
+
+    ranks = reserve["ranks"]
+    assert ranks["gain"][0] == {
+        "rankNo": 1,
+        "appId": 43639,
+        "appName": "白银之城",
+        "icon": "https://img-tc.tapimg.com/gain-43639.jpg",
+        "distributionType": 0,
+        "reserveAdd": 114809,
+        "totalReserveCount": 2452558,
+    }
+    assert ranks["total"][0]["appId"] == 777320
+
+
+def test_reserve_missing_coverage_is_not_zero(client, monkeypatch):
+    """11-08 之前没有预约采集：回 available=false + 原因，不拿 0 充数。"""
+    payload = _report(client, key="2026-44")["data"]
+    reserve = payload["reserve"]
+    assert reserve["available"] is False
+    assert "2026-11-08" in reserve["reason"]
+    assert "headline" not in reserve and "dist" not in reserve
+
+    # 半覆盖的期：W45 只 1/7 天，日均环比仍给（两期都有采集），但 partial 要标出来
+    w45 = _report(client, key="2026-45")["data"]["reserve"]
+    assert w45["coverage"]["dayCnt"] == 1
+    assert w45["coverage"]["expectedDayCnt"] == 7
+    assert w45["coverage"]["partial"] is True
+
+    # 月报 9/17 天：分母是「月内已过天数」，不是期长 30（夹具里没有月报 all 行，故直接调构建函数）
+    from datetime import date
+
+    from app.routers import periodic
+
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 17))
+    monthly = periodic._build_reserve("monthly", "2026-11", None)
+    assert monthly["coverage"]["dayCnt"] == 9
+    assert monthly["coverage"]["expectedDayCnt"] == 17
+    assert monthly["coverage"]["partial"] is True
+    assert monthly["headline"]["dailyAvg"] == round(1422592 / 9)
+    assert monthly["headline"]["dailyAvgPct"] is None       # 月报上期没有预约数据
+
+
+def test_reserve_not_in_periods_lines(client):
+    """预约不进 /periods 的 lines：否则选择器会给 W40~W44 标「1 条线缺数据」。"""
+    body = client.get(f"{PREFIX}/periods", params={"period": "weekly"}).json()
+    data = body["data"]
+    assert set(data["insufficientHistory"]) == {"download", "ad", "online"}
+    assert all("reserve" not in period["lines"] for period in data["periods"])
