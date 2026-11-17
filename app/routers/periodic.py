@@ -1440,6 +1440,13 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
     else:
         daily_avg_blocked = None
     daily_avg_pct = _ratio(daily_avg, prev_daily_avg) if daily_avg_blocked is None else None
+    if daily_avg_blocked:
+        # 不可比时，上期的**数值**也一并置空：最朴素的消费方就是 cur/prev-1，
+        # 1,131,061 / 163,381 − 1 = +592% 会读成一个完全合理的「暴涨」（DWS 一开始就警告过）。
+        # 只留天数类元信息（prevDayCnt / prevExpectedDayCnt / prevPeriodKey）——
+        # 前端「上期仅覆盖 1/7 天」那句话靠它们，不需要数值
+        prev_add = None
+        prev_daily_avg = None
 
     dist = []
     for dist_key in MAX_DIST_KEYS:

@@ -863,6 +863,11 @@ def test_reserve_block_headline_and_dist(client):
     assert head["dailyAvgPct"] is None
     assert head["dailyAvgBlocked"] == "prev_partial"
     assert head["dailyAvgComparable"] is False
+    # 不可比时上期数值也不给：cur/prev−1 会读成 +592% 的「暴涨」
+    assert head["prevReserveAdd"] is None
+    assert head["prevDailyAvg"] is None
+    # 但天数元信息要在，前端「上期仅覆盖 1/7 天」靠它
+    assert head["prevDayCnt"] == 1 and head["prevExpectedDayCnt"] == 7
 
     # 分型三项固定输出，新增量相加恒等于合计（款数不可加，另有 distNote 说明）
     assert [item["type"] for item in reserve["dist"]] == [0, 1, 2]
