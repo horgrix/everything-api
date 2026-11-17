@@ -1053,3 +1053,43 @@ def test_daily_skips_incomplete_today(monkeypatch):
     monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 13))
     start, end = periodic._daily_window("weekly", "2026-46")
     assert end == date(2026, 11, 12)                                   # 今天 11-13 被排除
+
+
+def test_online_rank_defaults_to_one_dimension(client):
+    """在线榜不传 list_type 时不能再混排：rank_no 只能在「同一维度内」有意义。"""
+    body = client.get(
+        f"{PREFIX}/rank",
+        params={"line": "online", "period": "weekly", "key": "2026-46", "category": "top"},
+    ).json()
+    data = body["data"]
+
+    # 不传就默认 dist_0，并用 listTypeDefaulted 明确告知，而不是悄悄给混排
+    assert data["listType"] == "dist_0"
+    assert data["listTypeDefaulted"] is True
+    assert data["listTypes"] == ["dist_0", "dist_1", "dist_2"]
+    assert {item["distributionType"] for item in data["items"]} <= {0}
+    assert [item["rankNo"] for item in data["items"]] == sorted(
+        item["rankNo"] for item in data["items"]
+    )
+
+    # 显式传维度：不再标记 defaulted
+    explicit = client.get(
+        f"{PREFIX}/rank",
+        params={
+            "line": "online",
+            "period": "weekly",
+            "key": "2026-46",
+            "category": "top",
+            "list_type": "dist_1",
+        },
+    ).json()["data"]
+    assert explicit["listType"] == "dist_1"
+    assert explicit["listTypeDefaulted"] is False
+
+    # 下载榜没有维度概念，这两字段不参与
+    download = client.get(
+        f"{PREFIX}/rank",
+        params={"line": "download", "period": "weekly", "key": "2026-46"},
+    ).json()["data"]
+    assert download["listType"] is None
+    assert download["listTypes"] is None

@@ -2205,6 +2205,15 @@ def rank(
     if line == "online" and list_type and list_type not in allowed_list_types:
         return error_response(CODE_BAD_REQUEST, f"未知 list_type：{list_type}", 400)
 
+    # 在线榜的 rank_no 是「同一 list_type 内」的名次：不带 list_type 时三个维度会混在一起，
+    # rank_no 变成 1,1,1,2,2,2… ——「Top 10」实际是每个维度各取三四条。
+    # 所以不传就默认 dist_0（商业游戏，量的主力），并用 listTypeDefaulted 明确告诉调用方
+    # 你拿到的是哪个维度，而不是悄悄把混排结果当 Top N。
+    list_type_defaulted = False
+    if line == "online" and not list_type:
+        list_type = CURRENT_LIST_TYPES[0]
+        list_type_defaulted = True
+
     try:
         period_key = period_key or _latest_period(source.table, period)
         if period_key is None:
@@ -2316,6 +2325,9 @@ def rank(
                 "periodKey": period_key,
                 "category": category,
                 "listType": list_type,
+                # true = 调用方没传 list_type，接口按默认维度（dist_0）给的
+                "listTypeDefaulted": list_type_defaulted,
+                "listTypes": list(CURRENT_LIST_TYPES) if line == "online" else None,
                 # true = 用的是 W45 之前的旧维度（is_active=0 的历史行）
                 "retiredDimension": line == "online" and list_type in RETIRED_LIST_TYPES,
                 "unit": source.unit,

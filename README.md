@@ -269,6 +269,10 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   `is_active` 是 `tinyint NOT NULL DEFAULT 1`，代码里用 `COALESCE(is_active,1)` 属防御性写法：
   DWS 下线残留行是「置 0 不删数据」，例如广告的 `(未分类)` 行，不过滤就会多出一个桶
 - 榜单默认过滤 `is_active = 1`（线上有大量下线残留行），同 `(rank_no, app_id)` 去重
+- **在线榜的 `rank_no` 只在同一 `list_type` 内成立**：不传 `list_type` 时接口默认用 `dist_0`
+  （商业游戏），并在响应里给 `listType` / `listTypeDefaulted` / `listTypes`。之前不传会返回三个
+  维度混排，`rank_no` 变成 1,1,1,2,2,2…，「Top 10」实际是每个维度各三四条。下载/广告榜没有
+  维度概念，这三个字段为 `null` / `false`。
 - **三张榜的 icon 都读自己表的 `icon` 列**（2026-11-16 起，在线榜由 DWS 从
   `dws_taptap_pc_online_peak_players_details_hourly` 回填，`is_active=1` 262/262 行非空）。
   列不存在时降级为 `NULL` 并发 warning，不会让整个榜单 400；值归一：`null` / `""` / `"NULL"`
