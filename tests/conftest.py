@@ -549,6 +549,80 @@ def _seed() -> None:
             "WHERE week_key = '2026-46'"
         )
 
+        # 逐日趋势源表（日增量）：下载 v2_daily / 广告 v6_daily / 在线明细小时
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_download_v2_daily (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                app_id INTEGER NOT NULL,
+                distribution_type INTEGER NULL,
+                download_count INTEGER NULL,
+                app_download_count INTEGER NULL,
+                pc_download_count INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_download_v2_daily "
+            "(crawled_at, app_id, distribution_type, download_count) VALUES (?, ?, ?, ?)",
+            [
+                # W46：11-09 / 11-10 有数据，11-11 故意整天缺（验证「缺天不出点」）
+                ("2026-11-09", 1, 0, 600000), ("2026-11-09", 2, 1, 300000),
+                ("2026-11-09", 3, 2, 200000),
+                ("2026-11-10", 1, 0, 500000), ("2026-11-10", 2, 1, 250000),
+                ("2026-11-10", 3, 2, 150000),
+                ("2026-11-12", 1, 0, 400000),
+                # 上一期 W45：只给 11-08 一天
+                ("2026-11-08", 1, 0, 333000),
+            ],
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_ad_aggr_v6_daily (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                app_id INTEGER NOT NULL,
+                distribution_type INTEGER NULL,
+                ad_views INTEGER NULL,
+                pcebid_views INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_ad_aggr_v6_daily "
+            "(crawled_at, app_id, distribution_type, ad_views, pcebid_views) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("2026-11-09", 1, 0, 100, 20), ("2026-11-09", 2, 1, 30, 0),
+                ("2026-11-10", 1, 0, 90, 10), ("2026-11-10", 2, 1, 30, 0),
+                ("2026-11-08", 1, 0, 70, 0),
+            ],
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_details_hourly (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                app_id INTEGER NOT NULL,
+                distribution_type INTEGER NULL,
+                online_players INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_details_hourly "
+            "(crawled_at, app_id, distribution_type, online_players) VALUES (?, ?, ?, ?)",
+            [
+                # 11-13 22 点：两 app 合计 1,000；20 点 900 → 当天峰值取 22 点
+                ("2026-11-13 20:00:00", 1, 0, 600),
+                ("2026-11-13 20:00:00", 2, 1, 300),
+                ("2026-11-13 22:00:00", 1, 0, 700),
+                ("2026-11-13 22:00:00", 2, 1, 300),
+                ("2026-11-14 22:00:00", 1, 0, 500),
+            ],
+        )
+
         # 预约报表（DWS 2026-11-16 落库，采集 2026-11-08 才有）：W45 只 1 天、W46 满周、月报 9/17 天
         conn.execute(
             """

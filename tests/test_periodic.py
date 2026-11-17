@@ -924,3 +924,56 @@ def test_reserve_daily_avg_pct_blocked_when_current_partial(client, monkeypatch)
     assert monthly["headline"]["dailyAvgBlocked"] == "prev_missing"
     assert monthly["headline"]["prevExpectedDayCnt"] == 31
     assert monthly["headline"]["prevDayCnt"] is None
+
+
+def test_daily_trend_points(client):
+    """逐日趋势：按「期内第几天」编号，缺天不出点，今天不算。"""
+    payload = _report(client)["data"]
+    download = next(line for line in payload["lines"] if line["key"] == "download")
+    daily = download["daily"]
+
+    assert daily["unit"] == "次" and daily["metric"] == "download_total"
+    assert daily["distLabels"]["2"] == "Maker 小游戏"
+
+    current = daily["current"]
+    assert current["periodKey"] == "2026-46"
+    assert [point["day"] for point in current["points"]] == [1, 2, 4]   # 11-11 缺天，不补 0
+    assert [point["date"] for point in current["points"]] == [
+        "2026-11-09", "2026-11-10", "2026-11-12",
+    ]
+    # 当日合计 = 各分型之和（与周期表同源）
+    assert current["points"][0]["total"] == 600000 + 300000 + 200000
+    assert current["points"][0]["dist"] == {"0": 600000, "1": 300000, "2": 200000}
+
+    previous = daily["previous"]
+    assert previous["periodKey"] == "2026-45"
+    assert [point["day"] for point in previous["points"]] == [7]        # 11-08 是 W45 第 7 天
+    assert previous["points"][0]["total"] == 333000
+
+
+def test_daily_ad_and_online(client):
+    payload = _report(client)["data"]
+    lines = {line["key"]: line for line in payload["lines"]}
+
+    ad = lines["ad"]["daily"]
+    assert ad["metric"] == "total_views"
+    assert ad["current"]["points"][0]["total"] == 100 + 20 + 30        # 曝光 = ad + pcebid
+
+    # 在线：日粒度取当天最大那一小时，且只给 total（分型日峰值不是同小时并发）
+    online = lines["online"]["daily"]
+    assert online["unit"] == "人" and online["metric"] == "peak_online_players"
+    points = {point["date"]: point for point in online["current"]["points"]}
+    assert points["2026-11-13"]["total"] == 700 + 300                  # 22 点 > 20 点 900
+    assert "dist" not in points["2026-11-13"]
+    assert set(points) == {"2026-11-13", "2026-11-14"}
+
+
+def test_daily_skips_incomplete_today(monkeypatch):
+    """今天还没采完：今天的点不出（否则曲线尾端多一根假断崖）。"""
+    from datetime import date
+
+    from app.routers import periodic
+
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 13))
+    start, end = periodic._daily_window("weekly", "2026-46")
+    assert end == date(2026, 11, 12)                                   # 今天 11-13 被排除

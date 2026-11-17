@@ -226,6 +226,33 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   进行中的期（如本周 W47）数值是半截的，画成一整期就会在末尾多一截假断崖；
   要画趋势就 `trend.filter(p => !p.isPartial)`，本期数字仍在卡片里看。不要用日期自己算，
   服务端的期界（周一起算、Asia/Shanghai）是唯一口径。
+**逐日趋势 `lines[].daily`（分型拆解下面那张图）**
+
+```json
+"daily": {
+  "unit": "次", "metric": "download_total",
+  "distLabels": {"0": "商业游戏", "1": "独立小游戏", "2": "Maker 小游戏"},
+  "current":  {"periodKey": "2026-46", "start": "2026-11-09", "end": "2026-11-15",
+               "points": [{"day": 1, "date": "2026-11-09", "total": 1179195,
+                           "dist": {"0": 845000, "1": 216000, "2": 117195}}, ...]},
+  "previous": {"periodKey": "2026-45", "start": "2026-11-02", "end": "2026-11-08",
+               "points": [...]}
+}
+```
+
+| 线 | `metric` | 日粒度口径 | 分型 |
+|---|---|---|---|
+| download | `download_total` | `SUM(download_count)`（`dws_taptap_download_v2_daily`） | 有 |
+| ad | `total_views` | `SUM(ad_views) + SUM(pcebid_views)` | 有 |
+| online | `peak_online_players` | 先按小时求全平台总人数，再取当天最大的那一小时 | **无**（只给 `total`） |
+
+- **同源已核对**：W46 下载七天之和 = 10,475,431、按分型 = 7024506/1803164/1647761，与周期表
+  `download_total` 和 `breakdown` 逐格相同；广告七天之和 = 5,969、分型 5822/147 也相同。
+- **`day` 是「期内第几天」**（从 1 开始），不是星期几：两期起始日不同，按星期对齐会错位。
+- **缺天不出点**：采集起点之前、当天还没采完的（今天）都没有点，不补 0。
+- 在线只给 `total` 的原因：日粒度下分型要「各自取当日峰值再相加」，那不是同小时的并发，
+  会和 `peakHour` / `dist_peak` 的峰值口径打架，所以宁可只给合计。
+
 - **分型也带逐期值**：`lines[].breakdown.items[].trend` 与 KPI 同形（`period/label/value/isPartial`），
   窗口按 `?window=`（默认 12）。所以「小游戏下载量」这类分型指标不必逐期回打 `/report`，
   独立 + Maker 两条曲线相加即可。某期没有该分型行时**该点不出现**（不补 0），

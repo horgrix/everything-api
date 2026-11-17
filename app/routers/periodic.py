@@ -74,6 +74,28 @@ MAX_DIST_KEYS = ("0", "1", "2")
 RESERVE_TABLE = "dws_taptap_reserve_periodic_report"
 RESERVE_RANK_TABLE = "dws_taptap_reserve_periodic_rank"
 RESERVE_START = "2026-11-08"
+
+# 逐日趋势（分型拆解下面那张图）：日粒度的源表。
+# 已核过与周期表同源：「下载」W46 七天之和 = 10,475,431、按分型累计 = 7024506/1803164/1647761，
+# 与周期表 download_total 与 breakdown 一致；「广告」七天之和 = 5,969，分型 5822/147 也一致。
+DAILY_SOURCES: dict[str, tuple[str, str, str, str]] = {
+    # 线: (表, 日增量表达式, metric 名（对齐周期表列）, 单位)
+    "download": (
+        "dws_taptap_download_v2_daily",
+        "download_count",
+        "download_total",
+        "次",
+    ),
+    "ad": (
+        "dws_taptap_ad_aggr_v6_daily",
+        "COALESCE(ad_views, 0) + COALESCE(pcebid_views, 0)",
+        "total_views",
+        "次",
+    ),
+}
+# 在线没有日表：按小时明细先求每小时总人数，再取当天的最大值（与周期表「峰值」同口径）。
+# 已核：W46 七天里 11-13 22 = 146,354，正是周期表与 dist_peak 的那个峰值。
+ONLINE_DETAILS_TABLE = "dws_taptap_pc_online_peak_players_details_hourly"
 RESERVE_RANK_LIMIT = 50
 # 分型款数各自去重：期内换过分型的游戏会在多个分型里各算一次，所以款数相加 > 合计；
 # 只有 reserve_add 恒等于合计。这句话要跟前端/老板两边都对齐，直接随 payload 透出去
@@ -1476,6 +1498,167 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
     }
 
 
+def _daily_window(period_type: str, key: str) -> tuple[date, date]:
+    """逐日图的取数区间：期初 ~ min(期末, 昨天)。
+
+    今天不含：当天还没采完，给了会在曲线尾端多一根假断崖。缺的天不补 0，直接不出点。
+    """
+    start_text, end_text = _period_range(period_type, key)
+    start = date.fromisoformat(start_text)
+    end = min(date.fromisoformat(end_text), _today() - timedelta(days=1))
+    return start, end
+
+
+def _sum_daily_points(
+    table: str, expression: str, start: date, end: date, period_start: date
+) -> list[dict[str, Any]]:
+    """日粒度求和（下载 / 广告）：按 (日期, 分型) 一次查全，再在内存里合并成每日点。"""
+    if end < start:
+        return []
+    sql = f"""
+        SELECT crawled_at AS d, distribution_type AS dist, SUM({expression}) AS v
+          FROM {table}
+         WHERE crawled_at BETWEEN '{start}' AND '{end}'
+         GROUP BY crawled_at, distribution_type
+    """
+    rows = _query(sql)
+    days: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        day_text = _as_text(row.get("d"))
+        if not day_text:
+            continue
+        value = _as_int(row.get("v")) or 0
+        slot = days.setdefault(day_text, {"total": 0, "dist": {}})
+        slot["total"] += value
+        dist_key = row.get("dist")
+        dist_text = _as_text(dist_key)
+        if dist_text is not None:
+            # 未分类（dist 为 NULL）不建分型条目，但它的量已计入 total
+            slot["dist"][dist_text] = slot["dist"].get(dist_text, 0) + value
+    return _daily_list(days, period_start)
+
+
+def _online_daily_points(start: date, end: date, period_start: date) -> list[dict[str, Any]]:
+    """在线逐日：先按小时求全平台总人数，再取当天最大的那一小时（峰值口径）。"""
+    if end < start:
+        return []
+    sql = f"""
+        SELECT SUBSTR(crawled_at, 1, 10) AS d, SUBSTR(crawled_at, 1, 13) AS h,
+               SUM(online_players) AS total
+          FROM {ONLINE_DETAILS_TABLE}
+         WHERE crawled_at >= '{start}' AND crawled_at <= '{end} 23:59:59'
+         GROUP BY SUBSTR(crawled_at, 1, 10), SUBSTR(crawled_at, 1, 13)
+    """
+    # SUBSTR 而不是 DATE()/HOUR()：crawled_at 是 varchar，两个函数 MySQL 与 SQLite 不同名，
+    # 同一段 SQL 要能在生产（MySQL）和夹具（SQLite）都跑
+    rows = _query(sql)
+    peaks: dict[str, int] = {}
+    for row in rows:
+        day_text = _as_text(row.get("d"))
+        total = _as_int(row.get("total"))
+        if not day_text or total is None:
+            continue
+        if total > peaks.get(day_text, 0):
+            peaks[day_text] = total
+    return _daily_list({day: {"total": value} for day, value in peaks.items()}, period_start)
+
+
+def _daily_list(days: dict[str, dict[str, Any]], period_start: date) -> list[dict[str, Any]]:
+    """{日期: {"total", "dist"}} → 按日排序的点列；day = 期内第几天（从 1 开始）。"""
+    points = []
+    for day_text in sorted(days):
+        moment = date.fromisoformat(day_text)
+        point: dict[str, Any] = {
+            "day": (moment - period_start).days + 1,
+            "date": day_text,
+            "total": days[day_text].get("total"),
+        }
+        if "dist" in days[day_text]:
+            point["dist"] = days[day_text]["dist"]
+        points.append(point)
+    return points
+
+
+def _build_daily(
+    period: str, period_key: str, prev_period: str | None
+) -> dict[str, dict[str, Any]]:
+    """每条业务线的逐日趋势（本期 + 上期），前端分型拆解下面那张图用。
+
+    三个口径决定：
+      1. 缺天的期不出点（不补 0）——采集起点之前、还没采完的今天都不算；
+      2. day 是「期内第几天」而不是星期几：两期起始日不同，按星期对齐会错位；
+      3. 下载/广告给 total + 分型；在线只给 total（日粒度下分型需先各自取峰值再相加，
+         那不是同小时的并发，给了反而与前文的峰值口径打架）。
+    """
+    result: dict[str, dict[str, Any]] = {}
+    windows = {}
+    for key in (period_key, prev_period):
+        if key:
+            windows[key] = _daily_window(period, key)
+
+    for line, (table, expression, metric, unit) in DAILY_SOURCES.items():
+        try:
+            current_start, current_end = windows[period_key]
+            current_points = _sum_daily_points(
+                table, expression, current_start, current_end, current_start
+            )
+            previous_block: dict[str, Any] = {"periodKey": None, "points": []}
+            if prev_period and prev_period in windows:
+                prev_start, prev_end = windows[prev_period]
+                previous_block = {
+                    "periodKey": prev_period,
+                    "start": prev_start.isoformat(),
+                    "end": prev_end.isoformat(),
+                    "points": _sum_daily_points(
+                        table, expression, prev_start, prev_end, prev_start
+                    ),
+                }
+        except SqlExecutionError as exc:
+            logger.info("逐日趋势不可用（%s）：%s", line, exc)
+            continue
+        result[line] = {
+            "unit": unit,
+            "metric": metric,
+            "distLabels": DIST_LABELS,
+            "current": {
+                "periodKey": period_key,
+                "start": current_start.isoformat(),
+                "end": current_end.isoformat(),
+                "points": current_points,
+            },
+            "previous": previous_block,
+        }
+
+    try:
+        current_start, current_end = windows[period_key]
+        current_points = _online_daily_points(current_start, current_end, current_start)
+        previous_block = {"periodKey": None, "points": []}
+        if prev_period and prev_period in windows:
+            prev_start, prev_end = windows[prev_period]
+            previous_block = {
+                "periodKey": prev_period,
+                "start": prev_start.isoformat(),
+                "end": prev_end.isoformat(),
+                "points": _online_daily_points(prev_start, prev_end, prev_start),
+            }
+        result["online"] = {
+            "unit": "人",
+            "metric": "peak_online_players",
+            "distLabels": DIST_LABELS,
+            "current": {
+                "periodKey": period_key,
+                "start": current_start.isoformat(),
+                "end": current_end.isoformat(),
+                "points": current_points,
+            },
+            "previous": previous_block,
+        }
+    except SqlExecutionError as exc:
+        logger.info("在线逐日趋势不可用：%s", exc)
+
+    return result
+
+
 def _build_flags(
     period_key: str,
     lines: dict[str, dict[str, dict[str, Any]]],
@@ -1741,6 +1924,8 @@ def report(
             for source in LINE_SOURCES
         }
         overview = _load_overview() if period == "weekly" else {}
+        # 逐日趋势：每条线一条或两条日粒度查询，失败就整块不出（前端静默不渲染）
+        daily_by_line = _build_daily(period, period_key, prev_period)
         # 全局峰值那一小时的同小时快照（只有在线线需要；取不到就降级为 None）
         peak_hour = _load_peak_hour(period, period_key)
     except (ConfigError, SqlExecutionError) as exc:
@@ -1878,6 +2063,7 @@ def report(
                 "periods": sorted(series),
                 "kpis": kpis,
                 "breakdown": breakdowns[source.key],
+                **(({"daily": daily_by_line[source.key]}) if source.key in daily_by_line else {}),
                 # 覆盖三信号：窗口内完整性 / 源起点 / （新鲜度看 meta.updatedAt）
                 "coverage": current,
                 **(({"peakHour": peak_hour}) if (source.key == "online" and peak_hour) else {}),
