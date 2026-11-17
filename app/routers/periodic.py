@@ -747,6 +747,7 @@ def _build_kpi(
     window: int,
     is_partial: bool,
     delta_blocked: str | None = None,
+    partial_periods: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """一个指标的当期值 / 上期值 / 环比 / 趋势点 / 可用期数。
 
@@ -777,6 +778,8 @@ def _build_kpi(
             "period": period,
             "label": _period_label_short(period),
             "value": _pick_value(series[period], spec.column, spec.is_int),
+            # 该期还没走完（如进行中的 W47）：末点会是一截假断崖
+            "isPartial": period in partial_periods,
         }
         for period in available[-window:]
     ]
@@ -1089,6 +1092,8 @@ def _build_breakdown(
     prev_key: str | None,
     grouped: dict[str, dict[str, dict[str, Any]]],
     all_value: float | int | None,
+    trend_periods: tuple[str, ...] = (),
+    partial_periods: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """分型拆解：三类固定输出（缺则 0 且 hasData=false），未分类单独归集。"""
     current = grouped.get(period_key, {})
@@ -1131,6 +1136,19 @@ def _build_breakdown(
     for item in items:
         item["share"] = round(item["value"] / total, 4) if total else None
         item["deltaPct"] = _ratio(item["value"], item["prevValue"])
+        # 逐期值（与 KPI 的 trend 同形）：前端画「小游戏下载量趋势」这类分型曲线时
+        # 不必再逐期打 /report（八期就是八次请求）。缺行的期不补 0，直接不出现。
+        item["trend"] = [
+            {
+                "period": period,
+                "label": _period_label_short(period),
+                "value": int(_as_number((grouped.get(period, {}).get(item["key"]) or {}).get("value")) or 0),
+                # 该期还没走完：末点会是一截假断崖，要画趋势就自己跳过
+                "isPartial": period in partial_periods,
+            }
+            for period in trend_periods
+            if item["key"] in grouped.get(period, {})
+        ]
 
     unclassified = [
         {
@@ -1458,18 +1476,29 @@ def report(
     earlier = [row_key for row_key in all_periods if row_key < period_key]
     prev_period = earlier[-1] if earlier else None
 
+    # 窗口内哪些期还没走完（含本期在内）：趋势点自己带 isPartial，前端画图时
+    # 统一跳过末点，不用在页面里各自算日期（W47 那种进行中期会把曲线尾已画成断崖）
+    trend_periods = tuple(all_periods[-window:]) if window else ()
+    partial_periods = frozenset(p for p in trend_periods if _is_partial(period, p))
+
     try:
+        # 分型趋势要逐期取数：一次 IN 查询拿全，别让前端逐期打接口
+        breakdown_keys = sorted(
+            {*trend_periods, period_key, *((prev_period,) if prev_period else ())}
+        )
         breakdowns = {
             source.key: _build_breakdown(
                 source,
                 period_key,
                 prev_period,
-                _load_breakdown(source, period, [k for k in (period_key, prev_period) if k]),
+                _load_breakdown(source, period, breakdown_keys),
                 _pick_value(
                     lines[source.key].get(period_key),
                     source.breakdown_column,
                     is_int=source.breakdown_column != "avg_online_players",
                 ),
+                trend_periods=trend_periods,
+                partial_periods=partial_periods,
             )
             for source in LINE_SOURCES
         }
@@ -1526,6 +1555,7 @@ def report(
                 window,
                 is_partial,
                 delta_blocked=delta_blocked,
+                partial_periods=partial_periods,
             )
             for metric in source.metrics
         ]
@@ -1548,6 +1578,7 @@ def report(
                     window,
                     is_partial,
                     delta_blocked=delta_blocked,
+                    partial_periods=partial_periods,
                 )
             )
         line_kpis[source.key] = kpis

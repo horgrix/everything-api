@@ -568,9 +568,18 @@ def test_coverage_info_three_signals(client):
     assert unknown["ratio"] is None and unknown["gap"] is False
 
 
-def test_coverage_level_by_impact_not_fixability(client):
-    """告警级别按「本期数字准不准」定：窗口内缺采就 medium，与巡检 FAIL 一致。"""
+def test_coverage_level_by_impact_not_fixability(client, monkeypatch):
+    """告警级别按「本期数字准不准」定：窗口内缺采就 medium，与巡检 FAIL 一致。
+
+    把「今天」钉在 2026-11-16：期望采样点 = 已过天数 × 12，跟着真实日期漂，
+    过一天这个用例就会自己变红（曾经在 11-17 凌晨失效过）。
+    """
+    from datetime import date
+
+    from app.routers import periodic
     from app.routers.periodic import _coverage_info, _coverage_level
+
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 16))
 
     # 假设 W46 只采到 60/84：真故障
     broken = _coverage_info("weekly", "2026-46", 60, "2026-11-08")
@@ -708,3 +717,52 @@ def test_players_expose_icon_and_app_id(client):
     older = {item["key"]: item for item in _report(client, key="2026-45")["data"]["players"]}
     assert older["torchlight"]["icon"] is None
     assert older["torchlight"]["appId"] is None
+
+
+def test_breakdown_items_carry_trend(client):
+    """分型逐期值：前端画「小游戏下载量趋势」不用再逐期打 /report。"""
+    payload = _report(client)["data"]
+    download = next(line for line in payload["lines"] if line["key"] == "download")
+    items = {item["key"]: item for item in download["breakdown"]["items"]}
+
+    commercial = items["0"]
+    # 夹具里下载分型行只有 W45/W46（W43/W44 只有 all 行）：缺行的期不出现，不补 0
+    assert [point["period"] for point in commercial["trend"]] == ["2026-45", "2026-46"]
+    assert commercial["trend"][-1]["value"] == 7024506      # 与当期 value 一致
+    assert commercial["trend"][-1]["label"] == "W46"
+    assert commercial["trend"][-1]["isPartial"] is False
+
+    # 小游戏 = 独立 + Maker 逐期相加（前端就是拿这两条曲线加起来的）
+    mini = [items["1"]["trend"][-1]["value"], items["2"]["trend"][-1]["value"]]
+    assert mini == [1803164, 1647761]
+
+    # KPI 的 trend 点也带 isPartial：进行中的期（W47）画图时要能自己跳过
+    kpi = next(k for k in download["kpis"] if k["key"] == "download_total")
+    assert all("isPartial" in point for point in kpi["trend"])
+
+
+def test_breakdown_trend_flags_partial_period():
+    """进行中的期在 trend 里被标 isPartial，缺行的期不补 0。"""
+    from app.routers.periodic import LINE_BY_KEY, _build_breakdown
+
+    grouped = {
+        "2026-45": {"0": {"value": 100}, "1": {"value": 10}, "2": {"value": 5}},
+        "2026-46": {"0": {"value": 200}, "1": {"value": 20}},   # 46 缺 "2" 这一行
+    }
+    built = _build_breakdown(
+        LINE_BY_KEY["download"],
+        "2026-46",
+        "2026-45",
+        grouped,
+        all_value=220,
+        trend_periods=("2026-45", "2026-46"),
+        partial_periods=frozenset({"2026-46"}),
+    )
+    items = {item["key"]: item for item in built["items"]}
+
+    assert items["0"]["trend"] == [
+        {"period": "2026-45", "label": "W45", "value": 100, "isPartial": False},
+        {"period": "2026-46", "label": "W46", "value": 200, "isPartial": True},
+    ]
+    # 46 期没有 "2" 的分型行：该点在 trend 里直接不出现，不补一个 0 造出断崖
+    assert [point["period"] for point in items["2"]["trend"]] == ["2026-45"]

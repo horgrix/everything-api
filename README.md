@@ -222,6 +222,14 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 - **缺值不补 0**：某指标某期没有数据时 `value` 为 `null`、`hasValue` 为 `false`，环比取「该指标自己有数据的最近一期」，
   上期为 0 或缺失时 `deltaPct` 为 `null`（不会再画出假的 -100%）
 - `availablePeriods` 给每个指标实际能画的期数，少于 3 期时 `insufficientHistory=true`；前端据此决定是否画趋势线
+- **趋势点自带 `isPartial`**：KPI 的 `trend[]` 和分型 `items[].trend[]` 每个点都有这个字段。
+  进行中的期（如本周 W47）数值是半截的，画成一整期就会在末尾多一截假断崖；
+  要画趋势就 `trend.filter(p => !p.isPartial)`，本期数字仍在卡片里看。不要用日期自己算，
+  服务端的期界（周一起算、Asia/Shanghai）是唯一口径。
+- **分型也带逐期值**：`lines[].breakdown.items[].trend` 与 KPI 同形（`period/label/value/isPartial`），
+  窗口按 `?window=`（默认 12）。所以「小游戏下载量」这类分型指标不必逐期回打 `/report`，
+  独立 + Maker 两条曲线相加即可。某期没有该分型行时**该点不出现**（不补 0），
+  故每类的点可能比 `availablePeriods` 少（例如下载线 W43/W44 只有 all 行）。
 - `isPartial=true` 表示这一期还没走完（月中 / 周中取数），此时 `deltaComparable=false`，环比只作参考
 - `flags` 由服务端算好，前端只负责渲染角标：概览表与在线周期表跨表不一致、按游戏单期放量（≥3×）、
   `distribution_type` 未归类、已下线列（`online_peak_pc` 等）、历史期数不足
