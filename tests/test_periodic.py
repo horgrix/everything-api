@@ -631,6 +631,58 @@ def test_roster_kpi_is_a_separate_metric(client):
     assert "game_cnt_roster" not in {kpi["key"] for kpi in older_lines["online"]["kpis"]}
 
 
+def test_in_progress_period_has_no_delta_pct(client, monkeypatch):
+    """进行中的期（如 W47 只 1 天）不给任何环比数字：KPI / 分型 / 榜单都不给。
+
+    「布尔说不可比、数字还在」这个坑今晚已经踩过一次（dailyAvgPct），这里一并堵上。
+    """
+    from datetime import date
+
+    from app.routers import periodic
+
+    # 把「今天」放到 W46 中间：W46 就成了进行中的期（只过了前 4 天）
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 12))
+    periodic._CACHE.clear()          # 缓存里的 payload 是按真实日期算的，必须清掉
+    try:
+        payload = _report(client)["data"]
+        assert payload["meta"]["isPartial"] is True
+
+        for line in payload["lines"]:
+            for kpi in line["kpis"]:
+                # 本期进行中：数字一律不给（在线线另有更具体的覆盖原因，见下）
+                assert kpi["deltaPct"] is None, kpi["key"]
+                assert kpi["prevValue"] is None, kpi["key"]
+                assert kpi["deltaComparable"] is False, kpi["key"]
+                if kpi["key"] == "concurrent_game_cnt":
+                    assert kpi["deltaBlocked"] == "secondary_metric"
+                elif line["key"] == "online":
+                    # 在线线 W45 上期覆盖不全，这条原因比「进行中」更具体，保留它
+                    assert kpi["deltaBlocked"] in {
+                        "current_in_progress", "prev_coverage_partial",
+                    }, kpi["key"]
+                else:
+                    assert kpi["deltaBlocked"] == "current_in_progress", kpi["key"]
+            assert line["breakdown"]["deltaBlocked"] == "current_in_progress"
+            for item in line["breakdown"]["items"]:
+                assert item["deltaPct"] is None
+
+        # 下载线的 KPI 一定是「进行中」这个原因（它上期是整周 W45）
+        download = next(line for line in payload["lines"] if line["key"] == "download")
+        assert download["kpis"][0]["deltaBlocked"] == "current_in_progress"
+
+        # 榜单同理：W47 那种「1 天 vs 整周」会是一串 −88%
+        body = client.get(
+            f"{PREFIX}/rank",
+            params={"line": "download", "period": "weekly", "key": "2026-46", "category": "top"},
+        ).json()
+        for item in body["data"]["items"]:
+            assert item["diffPct"] is None
+            assert item["diffBlocked"] == "current_in_progress"
+    finally:
+        # 用例内部的 payload 是按假「今天」算的，别让它污染后面的用例
+        periodic._CACHE.clear()
+
+
 def test_roster_spec_requires_column(monkeypatch):
     """老库没有 game_cnt_roster 列时，这条指标不存在——不猜、不拿 game_cnt 顶。"""
     from app.routers import periodic

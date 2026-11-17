@@ -451,6 +451,7 @@ W46 去重 728、单小时最大 671，覆盖 860；三者定义各异，同页�
 | `coverage_partial` | 本期**采集窗口内**有缺失（`coverage.ratio < 0.9`），此时另出 `medium` flag |
 | `prev_coverage_partial` | 上期窗口内缺采，或上期期初无源（`sourceStartsLate`），环比不可比（如 W46 拿 W45 的 581 当基数算出 +48%，假的） |
 | `secondary_metric` | 副指标本来就不出环比 |
+| `current_in_progress` | 本期还没走完（W47 只 1 天）。**环比数字一律置 null**，不只 `deltaComparable`：拿 1 天比整周会得出 −86% 那种假跌幅，页面能拦、导出脚本不会拦。分型 `breakdown.items[].deltaPct`、榜单 `items[].diffPct`（另有 `diffBlocked`）同规则 |
 
 置 null 时 `prevValue` / `deltaAbs` / `deltaPct` / `prevPeriodKey` 一并清空、`deltaComparable=false`，
 避免调用方自己用 `prevValue` 再算一次；`trend[]` 仍保留原始点。该期还会多一条 `flags`

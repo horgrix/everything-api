@@ -1132,6 +1132,7 @@ def _build_breakdown(
     all_value: float | int | None,
     trend_periods: tuple[str, ...] = (),
     partial_periods: frozenset[str] = frozenset(),
+    is_partial: bool = False,
 ) -> dict[str, Any]:
     """分型拆解：三类固定输出（缺则 0 且 hasData=false），未分类单独归集。"""
     current = grouped.get(period_key, {})
@@ -1173,7 +1174,8 @@ def _build_breakdown(
 
     for item in items:
         item["share"] = round(item["value"] / total, 4) if total else None
-        item["deltaPct"] = _ratio(item["value"], item["prevValue"])
+        # 本期还没走完时分型环比同样不可比：与 KPI 的 deltaBlocked 同词、同做法
+        item["deltaPct"] = None if is_partial else _ratio(item["value"], item["prevValue"])
         # 逐期值（与 KPI 的 trend 同形）：前端画「小游戏下载量趋势」这类分型曲线时
         # 不必再逐期打 /report（八期就是八次请求）。缺行的期不补 0，直接不出现。
         item["trend"] = [
@@ -1209,6 +1211,7 @@ def _build_breakdown(
     return {
         "line": source.key,
         "metric": source.breakdown_column,
+        **({"deltaBlocked": "current_in_progress"} if is_partial else {}),
         "items": items,
         "unclassified": unclassified,
         "unclassifiedTotal": unknown_total,
@@ -1925,6 +1928,7 @@ def report(
                 ),
                 trend_periods=trend_periods,
                 partial_periods=partial_periods,
+                is_partial=is_partial,
             )
             for source in LINE_SOURCES
         }
@@ -1967,11 +1971,17 @@ def report(
             if (prev_partial and previous and prev_period)
             else None
         )
-        # 本期或上期覆盖不全，环比一律置 null：半周去重 / 首轮孤点都会造出假涨幅
+        # 本期或上期覆盖不全，环比一律置 null：半周去重 / 首轮孤点都会造出假涨幅。
+        # 本期还没走完（W47 只 1 天）同样置 null——拿 1 天比整周会得出 −86% 那种假跌幅，
+        # 这个数不能进 payload：页面能拦，导出脚本/别人写的报表不会拦。
         delta_blocked = (
             "coverage_partial"
             if current_partial
-            else ("prev_coverage_partial" if prev_partial else None)
+            else (
+                "prev_coverage_partial"
+                if prev_partial
+                else ("current_in_progress" if is_partial else None)
+            )
         )
         kpis = [
             _build_kpi(
@@ -2187,6 +2197,8 @@ def rank(
         period_key = period_key or _latest_period(source.table, period)
         if period_key is None:
             return error_response(CODE_BAD_REQUEST, "尚无榜单数据", 404)
+        # 进行中的期（W47 只 1 天）不能出环比：榜内 prev 是整周，diffPct 会是一串 −88%
+        period_partial = _is_partial(period, period_key)
 
         cache_key = ("rank", line, period, period_key, category, limit, dist, list_type)
         cached = _cache_get(cache_key)
@@ -2257,7 +2269,9 @@ def rank(
                 "value": _as_int(value) if source.unit != "人" else _as_float(value),
                 "prevValue": _as_int(prev_value) if source.unit != "人" else _as_float(prev_value),
                 "diff": _as_int(diff_value) if source.unit != "人" else _as_float(diff_value),
-                "diffPct": _ratio(value, prev_value),
+                "diffPct": None if period_partial else _ratio(value, prev_value),
+                # 与 KPI 的 deltaBlocked 同词：进行中的期不能拿 1 天比整周（−88% 那种假跌幅）
+                **({"diffBlocked": "current_in_progress"} if period_partial else {}),
                 # 有有效在线小时数（下载/广告榜没有这个列 → null）
                 "realHours": _as_int(row.get("real_hours")),
             }
