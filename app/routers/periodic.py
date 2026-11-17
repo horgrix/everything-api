@@ -1373,11 +1373,21 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
     prev_full = bool(prev_day_cnt) and prev_expected_days is not None and (
         prev_day_cnt >= prev_expected_days
     )
-    # 本期还没采满（如 W47 只 1/2 天）时，日均环比拿「1 天 vs 7 天日均」比，
-    # 天然偏低（周末效应），那个数不能给：环比置 null，用 dailyAvgBlocked 说明原因。
-    # 上期未满（W46 对 W45 只 1 天）仍给数，但 dailyAvgComparable=false，让前端自己标「仅供参考」。
-    daily_avg_pct = _ratio(daily_avg, prev_daily_avg) if current_full else None
-    daily_avg_blocked = None if current_full else "current_partial"
+    # 日均环比只在「两期都采满」时才给。只要有一边不满就一直 null，并用
+    # dailyAvgBlocked 说明是哪一边：一个说「不可比」却同时给出数字的字段，
+    # 下一个消费方（导出、脚本）一定会直接读那个数字。
+    #   current_partial  W47 只 1/2 天：1 天对 7 天日均，周末效应冒充腰斩
+    #   prev_partial     W46 对 W45 只 1/7 天：周日单日对七天均值，看着「几乎持平」也是骗人
+    #   prev_missing     月报 11 对 10 月：上期早于采集起点，根本没有分母
+    if not current_full:
+        daily_avg_blocked = "current_partial"
+    elif not prev_day_cnt:
+        daily_avg_blocked = "prev_missing"
+    elif not prev_full:
+        daily_avg_blocked = "prev_partial"
+    else:
+        daily_avg_blocked = None
+    daily_avg_pct = _ratio(daily_avg, prev_daily_avg) if daily_avg_blocked is None else None
 
     dist = []
     for dist_key in MAX_DIST_KEYS:
@@ -1426,11 +1436,10 @@ def _build_reserve(period: str, period_key: str, prev_period: str | None) -> dic
             "prevDayCnt": prev_day_cnt,
             "prevExpectedDayCnt": prev_expected_days,
             "prevDailyAvg": prev_daily_avg,
-            # 只比日均；本期未采满（current_partial）时不提供数字，避免「腰斩」误读
+            # 两期都采满才出数；否则 null，用 dailyAvgBlocked 区分是哪一边
             "dailyAvgPct": daily_avg_pct,
             **(({"dailyAvgBlocked": daily_avg_blocked}) if daily_avg_blocked else {}),
-            # 两期都采满才算严格可比；否则数照给，但只能当参考
-            "dailyAvgComparable": daily_avg_pct is not None and prev_full,
+            "dailyAvgComparable": daily_avg_pct is not None,
         },
         "dist": dist,
         "distNote": RESERVE_DIST_NOTE,

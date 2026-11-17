@@ -266,7 +266,7 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
                "reserveTotalEnd": 69613606, "dailyAvg": 161580,
                "prevPeriodKey": "2026-45", "prevReserveAdd": 163381, "prevDayCnt": 1,
                "prevExpectedDayCnt": 7, "prevDailyAvg": 163381,
-               "dailyAvgPct": -1.1, "dailyAvgComparable": false},
+               "dailyAvgBlocked": "prev_partial", "dailyAvgComparable": false},
   "dist": [{"type": 0, "label": "商业游戏", "reserveAdd": 959971, "gameCnt": 110,
             "gameCntRoster": 111, "share": 84.87, "dayCnt": 7,
             "firstDay": "2026-11-09", "lastDay": "2026-11-15", "partial": false,
@@ -279,10 +279,16 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 
 - `coverage.dayCnt` 是**真采到**的天数，`expectedDayCnt` 是期内到今天的天数（月报会出现 9/17），
   所以前端不用自己算期界；`partial` = 两者不等。
-- `dailyAvgPct` 只比日均。**本期没采满时不给数字**：`dailyAvgPct=null` + `dailyAvgBlocked="current_partial"`
-  （W47 只 1/2 天，拿它比 W46 的 7 天日均会写成「腰斩 —20.7%」，那个数不能出）；日平均本身照给。
-- `dailyAvgComparable`：本期与上期**都采满**才 true。上期未满时数照给（如 W46 对 W45 的 -1.1%），
-  但只能当参考，前端可配 `prevDayCnt` / `prevExpectedDayCnt` 标注「上期仅 1 天」。
+- `dailyAvgPct` **只在两期都采满时才有数字**，否则一律 `null`，并用 `dailyAvgBlocked` 说明是哪一边：
+
+  | `dailyAvgBlocked` | 含义 | 例 |
+  |---|---|---|
+  | `current_partial` | 本期没采满，日平均身照给、环比不给 | W47 只 1/2 天（1 天对 7 天均值会是「腰斩 -20.7%」） |
+  | `prev_partial` | 上期没采满 | W46 对 W45（1/7 天，周日单日对七天均值，「几乎持平」也是假象） |
+  | `prev_missing` | 上期早于采集起点，没有分母（`prevDayCnt` 是 `null` 不是 0） | 月末对上个月 |
+
+  `dailyAvgComparable` 与 `dailyAvgPct is not None` **恒等**——不出现「布尔说不可比、数字却还在」的组合。
+- `prevDayCnt` / `prevExpectedDayCnt` 仍照给，便于前端写「上期仅覆盖 1/7 天」这种注解。
 - `dist[].dayCnt / firstDay / lastDay / partial` 是**分型自己**的覆盖：Maker 这类新品类会上线得晚，
   W46 是 4/7 天（11-12~11-15）。注意款数相加大于合计（110+52+1=163 vs 162，同一款可跨分型），
   只有 `reserveAdd` 三项相加恒等于合计。

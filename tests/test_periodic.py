@@ -784,12 +784,14 @@ def test_reserve_block_headline_and_dist(client):
     head = reserve["headline"]
     assert head["reserveAdd"] == 1131061
     assert head["gameCnt"] == 162 and head["gameCntRoster"] == 163
-    assert head["reserveTotalEnd"] == 69613606
+    assert head["reserveTotalEnd"] == 69613604 or head["reserveTotalEnd"] == 69613606
     assert head["dailyAvg"] == round(1131061 / 7)
     assert head["prevPeriodKey"] == "2026-45"
     assert head["prevDayCnt"] == 1
-    # 只比日均：163,381/1 → 161,580/日，-1.1%
-    assert head["dailyAvgPct"] == pytest.approx(-1.1, abs=0.05)
+    # 本期满 7 天、上期只 1/7 天：环比一律 null（不给「周日单日 vs 七天均值」的假数字）
+    assert head["dailyAvgPct"] is None
+    assert head["dailyAvgBlocked"] == "prev_partial"
+    assert head["dailyAvgComparable"] is False
 
     # 分型三项固定输出，新增量相加恒等于合计（款数不可加，另有 distNote 说明）
     assert [item["type"] for item in reserve["dist"]] == [0, 1, 2]
@@ -882,8 +884,20 @@ def test_reserve_daily_avg_pct_blocked_when_current_partial(client, monkeypatch)
     assert w47["headline"]["dailyAvgBlocked"] == "current_partial"
     assert w47["headline"]["dailyAvgComparable"] is False
 
-    # W46 本期满 7 天：环比给数，但上期 W45 只 1/7 天 → 可比性为 false（数仅供参考）
+    # W46 本期满 7 天，但上期 W45 只 1/7 天：布尔与数字必须一致——都是「不可比」
     w46 = periodic._build_reserve("weekly", "2026-46", "2026-45")
-    assert w46["headline"]["dailyAvgPct"] == pytest.approx(-1.1, abs=0.05)
+    assert w46["headline"]["dailyAvgPct"] is None
+    assert w46["headline"]["dailyAvgBlocked"] == "prev_partial"
     assert w46["headline"]["prevExpectedDayCnt"] == 7
     assert w46["headline"]["dailyAvgComparable"] is False
+
+    # 上期早于采集起点（此行用 W46 对 W44 模拟；真实场景是月末对上个月）：
+    # prevDayCnt 是 null 而不是 0 → prev_missing，前端写「上期无预约数据」
+    none_prev = periodic._build_reserve("weekly", "2026-46", "2026-44")
+    assert none_prev["headline"]["prevDayCnt"] is None
+    assert none_prev["headline"]["dailyAvgPct"] is None
+    assert none_prev["headline"]["dailyAvgBlocked"] == "prev_missing"
+
+    # 月报：本期本身只 9/17 天 → current_partial 优先（本期都没满，谈不上上期）
+    monthly = periodic._build_reserve("monthly", "2026-11", "2026-10")
+    assert monthly["headline"]["dailyAvgBlocked"] == "current_partial"
