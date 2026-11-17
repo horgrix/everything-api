@@ -933,6 +933,7 @@ def test_daily_trend_points(client):
     daily = download["daily"]
 
     assert daily["unit"] == "次" and daily["metric"] == "download_total"
+    assert daily["summable"] is True        # 日增量，可相加得到期总量
     assert daily["distLabels"]["2"] == "Maker 小游戏"
 
     current = daily["current"]
@@ -962,6 +963,7 @@ def test_daily_ad_and_online(client):
     # 在线：日粒度取当天最大那一小时，且只给 total（分型日峰值不是同小时并发）
     online = lines["online"]["daily"]
     assert online["unit"] == "人" and online["metric"] == "peak_online_players"
+    assert online["summable"] is False      # 各点是当天峰值，相加没有意义
     points = {point["date"]: point for point in online["current"]["points"]}
     assert points["2026-11-13"]["total"] == 700 + 300                  # 22 点 > 20 点 900
     assert "dist" not in points["2026-11-13"]

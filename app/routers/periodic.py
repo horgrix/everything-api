@@ -93,9 +93,12 @@ DAILY_SOURCES: dict[str, tuple[str, str, str, str]] = {
         "次",
     ),
 }
-# 在线没有日表：按小时明细先求每小时总人数，再取当天的最大值（与周期表「峰值」同口径）。
-# 已核：W46 七天里 11-13 22 = 146,354，正是周期表与 dist_peak 的那个峰值。
-ONLINE_DETAILS_TABLE = "dws_taptap_pc_online_peak_players_details_hourly"
+# 在线没有日表：用平台快照小时表按天取 MAX（与周期表「峰值」同口径）。
+# 已核（W46 七天）：v2_hourly 每日 MAX = 121104 / 121865 / 120764 / 122297 / 146354 /
+# 139416 / 127466，与「details_hourly 按小时求和后取当日最大」逐个相同，
+# 且 max(每日) = 146354 = 周期表 peak_online_players —— 图上不会出现「日线高点高于期值」。
+# 用 v2_hourly 而不是 details：每小时一行（整周 84 行），不必把 860 款 × 84 小时的明细搬回来。
+ONLINE_HOURLY_TABLE = "dws_taptap_pc_online_peak_players_v2_hourly"
 RESERVE_RANK_LIMIT = 50
 # 分型款数各自去重：期内换过分型的游戏会在多个分型里各算一次，所以款数相加 > 合计；
 # 只有 reserve_add 恒等于合计。这句话要跟前端/老板两边都对齐，直接随 payload 透出去
@@ -1543,13 +1546,12 @@ def _online_daily_points(start: date, end: date, period_start: date) -> list[dic
     if end < start:
         return []
     sql = f"""
-        SELECT SUBSTR(crawled_at, 1, 10) AS d, SUBSTR(crawled_at, 1, 13) AS h,
-               SUM(online_players) AS total
-          FROM {ONLINE_DETAILS_TABLE}
+        SELECT SUBSTR(crawled_at, 1, 10) AS d, MAX(online_players) AS total
+          FROM {ONLINE_HOURLY_TABLE}
          WHERE crawled_at >= '{start}' AND crawled_at <= '{end} 23:59:59'
-         GROUP BY SUBSTR(crawled_at, 1, 10), SUBSTR(crawled_at, 1, 13)
+         GROUP BY SUBSTR(crawled_at, 1, 10)
     """
-    # SUBSTR 而不是 DATE()/HOUR()：crawled_at 是 varchar，两个函数 MySQL 与 SQLite 不同名，
+    # SUBSTR 而不是 DATE()：crawled_at 是 varchar，DATE()/HOUR() 在 MySQL 与 SQLite 行为不同，
     # 同一段 SQL 要能在生产（MySQL）和夹具（SQLite）都跑
     rows = _query(sql)
     peaks: dict[str, int] = {}
@@ -1558,8 +1560,7 @@ def _online_daily_points(start: date, end: date, period_start: date) -> list[dic
         total = _as_int(row.get("total"))
         if not day_text or total is None:
             continue
-        if total > peaks.get(day_text, 0):
-            peaks[day_text] = total
+        peaks[day_text] = max(total, peaks.get(day_text, 0))
     return _daily_list({day: {"total": value} for day, value in peaks.items()}, period_start)
 
 
@@ -1619,6 +1620,8 @@ def _build_daily(
         result[line] = {
             "unit": unit,
             "metric": metric,
+            # 逐日点可以相加得到期总量（下载 / 广告是日增量）
+            "summable": True,
             "distLabels": DIST_LABELS,
             "current": {
                 "periodKey": period_key,
@@ -1644,6 +1647,8 @@ def _build_daily(
         result["online"] = {
             "unit": "人",
             "metric": "peak_online_players",
+            # 每个点是「当天峰值」，峰值的峰值的 ≠ 各日峰值之和：不可相加
+            "summable": False,
             "distLabels": DIST_LABELS,
             "current": {
                 "periodKey": period_key,

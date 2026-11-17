@@ -599,6 +599,27 @@ def _seed() -> None:
                 ("2026-11-08", 1, 0, 70, 0),
             ],
         )
+        # 平台快照小时表（在线逐日峰值的来源）：每小时一行
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_v2_hourly (
+                id INTEGER PRIMARY KEY,
+                crawled_at TEXT NOT NULL,
+                online_game_cnt INTEGER NULL,
+                online_players INTEGER NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO dws_taptap_pc_online_peak_players_v2_hourly "
+            "(crawled_at, online_game_cnt, online_players) VALUES (?, ?, ?)",
+            [
+                ("2026-11-13 20:00:00", 640, 900),
+                ("2026-11-13 22:00:00", 653, 1000),
+                ("2026-11-14 22:00:00", 651, 500),
+                ("2026-11-08 20:00:00", 600, 800),
+            ],
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dws_taptap_pc_online_peak_players_details_hourly (
