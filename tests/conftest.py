@@ -283,6 +283,9 @@ def _seed() -> None:
                 total_views INTEGER NULL,
                 ad_views INTEGER NULL,
                 pcebid_views INTEGER NULL,
+                app_total INTEGER NULL,
+                pc_total INTEGER NULL,
+                kw_total INTEGER NULL,
                 updated_at TEXT NULL,
                 is_active INTEGER NULL
             )
@@ -452,22 +455,25 @@ def _seed() -> None:
         conn.executemany(
             "INSERT INTO dws_taptap_ad_aggr_v6_periodic_report "
             "(period_type, crawled_at, category_type, category_value, app_cnt, "
-            " total_views, ad_views, pcebid_views, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " total_views, ad_views, pcebid_views, app_total, pc_total, kw_total, "
+            " updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                ("weekly", "2026-44", "all", "ALL", 109, 4597, 4373, 224,
+                # 分段列（app_total / pc_total / kw_total）之和 = total_views；
+                # 旧的 ad_views 是「非资源互换坑位」，不等于 APP 端（线上实测 5328 vs 5096）
+                ("weekly", "2026-44", "all", "ALL", 109, 4597, 4373, 224, 1900, 400, 2297,
                  "2026-11-16 11:35:09"),
-                ("weekly", "2026-45", "all", "ALL", 96, 5534, 5114, 420,
+                ("weekly", "2026-45", "all", "ALL", 96, 5534, 5114, 420, 2300, 780, 2454,
                  "2026-11-16 11:35:09"),
-                ("weekly", "2026-46", "all", "ALL", 120, 5969, 5328, 641,
+                ("weekly", "2026-46", "all", "ALL", 120, 5969, 5328, 641, 2440, 873, 2656,
                  "2026-11-16 11:35:09"),
-                ("weekly", "2026-45", "dist", "0", 92, 5180, None, None, None),
-                ("weekly", "2026-45", "dist", "1", 3, 320, None, None, None),
-                ("weekly", "2026-45", "dist", "2", 1, 34, None, None, None),
-                ("weekly", "2026-46", "dist", "0", 104, 5402, None, None, None),
-                ("weekly", "2026-46", "dist", "1", 2, 468, None, None, None),
-                ("weekly", "2026-46", "dist", "2", 0, 0, None, None, None),
-                ("weekly", "2026-46", "dist", "(未分类)", 14, 99, None, None, None),
+                ("weekly", "2026-45", "dist", "0", 92, 5180, None, None, None, None, None, None),
+                ("weekly", "2026-45", "dist", "1", 3, 320, None, None, None, None, None, None),
+                ("weekly", "2026-45", "dist", "2", 1, 34, None, None, None, None, None, None),
+                ("weekly", "2026-46", "dist", "0", 104, 5402, None, None, None, None, None, None),
+                ("weekly", "2026-46", "dist", "1", 2, 468, None, None, None, None, None, None),
+                ("weekly", "2026-46", "dist", "2", 0, 0, None, None, None, None, None, None),
+                ("weekly", "2026-46", "dist", "(未分类)", 14, 99, None, None, None, None, None, None),
             ],
         )
         # is_active=0 的下线残留行：接口必须过滤掉（DWS 的规矩是置 0 不删数据）

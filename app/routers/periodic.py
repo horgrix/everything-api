@@ -154,12 +154,20 @@ class MetricSpec:
     """一条业务线里的一个指标（列名 + 对外键名 + 展示单位）。"""
 
     key: str
+    # 取数键：从行里读 row[column]。expression / placeholder 也以它为别名
     column: str
     label: str
     unit: str
     is_int: bool = True
     # 口径备注（前端可做 tooltip）。比如广告是「位次」而不是用户级曝光
     note: str = ""
+    # 表里没有独立列时的 SQL 表达式（结果别名 = column），requires 列出它依赖的列
+    expression: str | None = None
+    requires: tuple[str, ...] = ()
+    # 表达式/列不可用时的退回列（老库兼容，值可能偏但不会 500）
+    fallback: str | None = None
+    # 数据源还没上线时的常量（如 PC 搜索页恒 0），列不存在才生效
+    placeholder: float | None = None
 
 
 @dataclass(frozen=True)
@@ -204,19 +212,63 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "次",
                 note="采集位次：每游戏每小时在每个广告坑位出现计 1 次，不等于用户曝光量",
             ),
+            # APP 曝光 = APP 首页 + APP 搜索页（app_ad+app_pcebid+kw_ad+kw_pcebid）。
+            # 旧的 ad_views 是「非资源互换坑位」而不是 APP 端，会把 PC 首页和搜索页也算进去
             MetricSpec(
                 "ad_app",
-                "ad_views",
+                "ad_app",
                 "APP 曝光",
                 "次",
-                note="采集位次，每游戏每小时每个坑位计 1 次",
+                expression="COALESCE(app_total, 0) + COALESCE(kw_total, 0)",
+                requires=("app_total", "kw_total"),
+                fallback="ad_views",
+                note="APP 端投放：首页 + 搜索页（app_ad + app_pcebid + kw_ad + kw_pcebid）",
             ),
             MetricSpec(
                 "ad_pcebid",
-                "pcebid_views",
+                "ad_pcebid",
                 "PC 曝光",
                 "次",
-                note="资源互换位次，每游戏每小时每个坑位计 1 次",
+                expression="COALESCE(pc_total, 0)",
+                requires=("pc_total",),
+                fallback="pcebid_views",
+                note="PC 端投放：首页（pc_ad + pc_pcebid）；PC 搜索页源未上线",
+            ),
+            # 四个分段：与上面两行相加口径一致（APP 曝光 = 首页 + 搜索页；PC 曝光 = 首页）
+            MetricSpec(
+                "ad_app_home",
+                "ad_app_home",
+                "APP 首页曝光",
+                "次",
+                expression="COALESCE(app_total, 0)",
+                requires=("app_total",),
+                note="app_ad_views + app_pcebid_views",
+            ),
+            MetricSpec(
+                "ad_app_search",
+                "ad_app_search",
+                "APP 搜索页曝光",
+                "次",
+                expression="COALESCE(kw_total, 0)",
+                requires=("kw_total",),
+                note="kw_ad_views + kw_pcebid_views",
+            ),
+            MetricSpec(
+                "ad_pc_home",
+                "ad_pc_home",
+                "PC 首页曝光",
+                "次",
+                expression="COALESCE(pc_total, 0)",
+                requires=("pc_total",),
+                note="pc_ad_views + pc_pcebid_views",
+            ),
+            MetricSpec(
+                "ad_pc_search",
+                "ad_pc_search",
+                "PC 搜索页曝光",
+                "次",
+                placeholder=0,
+                note="源未上线（pc_kw_ad_views / pc_kw_pcebid_views 还没有），恒 0",
             ),
             MetricSpec("app_cnt", "app_cnt", "投放游戏数", "款"),
         ),
@@ -664,11 +716,32 @@ def _load_line_rows(period_type: str) -> dict[str, dict[str, dict[str, Any]]]:
 
     result: dict[str, dict[str, dict[str, Any]]] = {}
     for source in LINE_SOURCES:
-        columns = ", ".join(metric.column for metric in source.metrics)
+        available_columns = _columns_of(source.table)
+        # 每个 spec 都要在 row 里有个可读的别名：普通列直接用列名，表达式 / 常量占位 / 老库退回
+        # 都别名成 spec.column，这样 _build_kpi 只认一种读取方式
+        selects: list[str] = []
+        for metric in source.metrics:
+            if metric.expression and set(metric.requires) <= available_columns:
+                selects.append(f"({metric.expression}) AS {metric.column}")
+            elif metric.column in available_columns:
+                selects.append(metric.column)
+            elif metric.placeholder is not None:
+                selects.append(f"{metric.placeholder} AS {metric.column}")
+            elif metric.fallback and metric.fallback in available_columns:
+                # 老库没有分段列：退回旧列，数会偏但不会 500；打一条 WARNING
+                _warn_missing_column(
+                    source.table,
+                    metric.requires[0] if metric.requires else metric.column,
+                    f"{metric.key} 退回旧列 {metric.fallback}，口径与新版不一致",
+                )
+                selects.append(f"{metric.fallback} AS {metric.column}")
+            else:
+                selects.append(f"NULL AS {metric.column}")
+        columns = ", ".join(selects)
         # 覆盖款数是后加的列，不在 metrics 里按线固定，列在才取（和 sample_hours 一样按列存断）
-        if ROSTER_COLUMN in _columns_of(source.table):
+        if ROSTER_COLUMN in available_columns:
             columns += f", {ROSTER_COLUMN}"
-        if "sample_hours" in _columns_of(source.table):
+        if "sample_hours" in available_columns:
             columns += ", sample_hours"
         active = _active_filter(source.table)
         sql = f"""

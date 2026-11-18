@@ -402,7 +402,27 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
 | `download_total` | 下载总量 | 次 | download |
 | `download_pc` | PC 下载量 | 次 | download |
 | `download_app` | APP 下载量 | 次 | download |
-| `ad_total` | 广告曝光（`ad_views + pcebid_views`，**采集位次**） | 次 | ad |
+| `ad_total` | 广告曝光（`total_views`，**采集位次**） | 次 | ad |
+
+**广告分端口径（2026-11-17 修正）**
+
+`ad_views` / `pcebid_views` 是「非资源互换坑位 / 资源互换坑位」的旧二分，**不是端的分法**：
+W46 `ad_views=5328` 里含 APP 首页 1799、APP 搜索 2656、PC 首页 873，把它当「APP 曝光」是错的。
+现在按端与坑位取值（库里有分段列，同批由 DWS 重算）：
+
+| key | 标签 | 取数 | W46 |
+|---|---|---|---|
+| `ad_total` | 广告曝光 | `total_views` | 5,969 |
+| `ad_app` | APP 曝光 | `app_total + kw_total`（首页 + 搜索） | 2,440 + 2,656 = **5,096** |
+| `ad_pcebid` | PC 曝光 | `pc_total`（首页；PC 搜索页未上线） | **873** |
+| `ad_app_home` | APP 首页曝光 | `app_total` | 2,440 |
+| `ad_app_search` | APP 搜索页曝光 | `kw_total` | 2,656 |
+| `ad_pc_home` | PC 首页曝光 | `pc_total` | 873 |
+| `ad_pc_search` | PC 搜索页曝光 | 源未上线（`pc_kw_*` 还没采）→ **恒 0**，带 note | 0 |
+
+`ad_app + ad_pcebid == ad_total`，四个分段之和也等于 `ad_total`——两条恒等式都随单测钉住。
+`ad_app` / `ad_pcebid` 的 key 没变（前端不用改），只是换了取数列；老库没有分段列时退回
+`ad_views` / `pcebid_views` 并打 WARNING（值会偏，但不 500）。
 
 **改名历史（兼容性）**：`online_peak` 已在 `ed3886c` 改名为 `online_peak_players`，
 对齐 `report-metric-spec.json`；接口**不再返回旧名**，仍按 `online_peak` 取值会拿到 `undefined`。

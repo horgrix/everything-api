@@ -1125,3 +1125,34 @@ def test_reserve_unavailable_has_no_daily(client):
     reserve = _report(client, key="2026-44")["data"]["reserve"]
     assert reserve["available"] is False
     assert "daily" not in reserve
+
+
+def test_ad_segment_metrics(client):
+    """广告：APP 曝光 = APP 首页 + APP 搜索页；PC 曝光 = PC 首页；两者相加 = 广告曝光。"""
+    payload = _report(client)["data"]
+    ad = next(line for line in payload["lines"] if line["key"] == "ad")
+    kpis = {kpi["key"]: kpi for kpi in ad["kpis"]}
+
+    # 旧口径 ad_views=5328 是「非资源互换坑位」，不等于 APP 端
+    assert kpis["ad_app"]["value"] == 2440 + 2656          # app_total + kw_total
+    assert kpis["ad_pcebid"]["value"] == 873               # pc_total
+    assert kpis["ad_app"]["value"] + kpis["ad_pcebid"]["value"] == kpis["ad_total"]["value"]
+
+    assert kpis["ad_app_home"]["value"] == 2440
+    assert kpis["ad_app_search"]["value"] == 2656
+    assert kpis["ad_pc_home"]["value"] == 873
+    # PC 搜索页源未上线：恒 0，且带说明（不能显示成「缺值」）
+    assert kpis["ad_pc_search"]["value"] == 0
+    assert kpis["ad_pc_search"]["hasValue"] is True
+    assert "未上线" in kpis["ad_pc_search"]["note"]
+
+    # 分段四格之和 = 广告曝光
+    segment_sum = sum(
+        kpis[key]["value"]
+        for key in ("ad_app_home", "ad_app_search", "ad_pc_home", "ad_pc_search")
+    )
+    assert segment_sum == kpis["ad_total"]["value"]
+
+    # 新的四格不进 6 个主 KPI（主 KPI 仍是那 6 条）
+    core_keys = {kpi["key"] for kpi in payload["coreKpis"]}
+    assert "ad_app_home" not in core_keys and "ad_app_search" not in core_keys
