@@ -168,6 +168,9 @@ class MetricSpec:
     fallback: str | None = None
     # 数据源还没上线时的常量（如 PC 搜索页恒 0），列不存在才生效
     placeholder: float | None = None
+    # 该指标真正开始有采集的日期（YYYY-MM-DD）。早于它的期不是「0」，是「还没采」：
+    # 前端据此写「未采集」，并挡住「整期跨过起点」那种占比系统性偏低的环比
+    coverage_start: str | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +222,7 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "ad_app",
                 "APP 曝光",
                 "次",
+                coverage_start="2026-10-13",
                 expression="COALESCE(app_total, 0) + COALESCE(kw_total, 0)",
                 requires=("app_total", "kw_total"),
                 fallback="ad_views",
@@ -229,6 +233,7 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "ad_pcebid",
                 "PC 曝光",
                 "次",
+                coverage_start="2026-10-19",
                 expression="COALESCE(pc_total, 0)",
                 requires=("pc_total",),
                 fallback="pcebid_views",
@@ -240,6 +245,7 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "ad_app_home",
                 "APP 首页曝光",
                 "次",
+                coverage_start="2026-10-13",
                 expression="COALESCE(app_total, 0)",
                 requires=("app_total",),
                 note="app_ad_views + app_pcebid_views",
@@ -249,6 +255,7 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "ad_app_search",
                 "APP 搜索页曝光",
                 "次",
+                coverage_start="2026-10-13",
                 expression="COALESCE(kw_total, 0)",
                 requires=("kw_total",),
                 note="kw_ad_views + kw_pcebid_views",
@@ -258,6 +265,7 @@ LINE_SOURCES: tuple[LineSource, ...] = (
                 "ad_pc_home",
                 "PC 首页曝光",
                 "次",
+                coverage_start="2026-10-19",
                 expression="COALESCE(pc_total, 0)",
                 requires=("pc_total",),
                 note="pc_ad_views + pc_pcebid_views",
@@ -864,6 +872,7 @@ def _build_kpi(
     is_partial: bool,
     delta_blocked: str | None = None,
     partial_periods: frozenset[str] = frozenset(),
+    period_type: str = "weekly",
 ) -> dict[str, Any]:
     """一个指标的当期值 / 上期值 / 环比 / 趋势点 / 可用期数。
 
@@ -901,6 +910,17 @@ def _build_kpi(
     ]
 
     delta_pct = _ratio(value, prev_value)
+
+    # 该指标自己什么时候才开始有采集（如广告 PC 段 2026-10-19）：
+    #   period_start < 起点 → 整期跨过起点（或整段早于起点），占比系统性偏低、环比不可比
+    # 值仍然照给（前端按 coverageStart 写「未采集」），但环比一律不出，避免拿残缺期去比
+    period_start_text, _period_end = _period_range(period_type, period_key)
+    segment_starts_inside = (
+        spec.coverage_start is not None and period_start_text < spec.coverage_start
+    )
+    if segment_starts_inside and not delta_blocked:
+        delta_blocked = "segment_partial_coverage"
+
     if delta_blocked:
         # 不可比：连上期值和环比一起置 null，避免前端又用 prevValue 自己算出假涨幅
         prev_value = None
@@ -928,6 +948,8 @@ def _build_kpi(
         "insufficientHistory": len(available) < INSUFFICIENT_POINTS,
         # 前端可直接判断：本期有没有这个值（缺值不要显示 0）
         "hasValue": value is not None,
+        # 早于这个日期的期不是「0」，是「还没采集」；没有起点概念的指标不带这个字段
+        **(({"coverageStart": spec.coverage_start}) if spec.coverage_start else {}),
         # 口径备注：只有需要解释的指标才有（如广告是位次而不是用户曝光）
         **(({"note": spec.note}) if spec.note else {}),
     }
@@ -2123,6 +2145,7 @@ def report(
                 is_partial,
                 delta_blocked=delta_blocked,
                 partial_periods=partial_periods,
+                period_type=period,
             )
             for metric in source.metrics
         ]
@@ -2146,6 +2169,7 @@ def report(
                     is_partial,
                     delta_blocked=delta_blocked,
                     partial_periods=partial_periods,
+                    period_type=period,
                 )
             )
         line_kpis[source.key] = kpis

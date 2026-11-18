@@ -420,6 +420,23 @@ W46 `ad_views=5328` 里含 APP 首页 1799、APP 搜索 2656、PC 首页 873，�
 | `ad_pc_home` | PC 首页曝光 | `pc_total` | 873 |
 | `ad_pc_search` | PC 搜索页曝光 | 源未上线（`pc_kw_*` 还没采）→ **恒 0**，带 note | 0 |
 
+**分段采集起点 `kpi.coverageStart`**（2026-11-18 加）
+
+各个段不是同一时间开始采的，早于起点的期那个 0 是「还没采」，不是「没有曝光」：
+
+| 指标 | `coverageStart` |
+|---|---|
+| `ad_app` / `ad_app_home` / `ad_app_search` | `2026-10-13` |
+| `ad_pcebid` / `ad_pc_home` | `2026-10-19` |
+| `ad_pc_search` | 无（源还没上线，给日期就是编） |
+| `ad_total` | 无（总量跨起点，没有「整段未采集」这种语义） |
+
+两条行为：
+
+- **值照给**，前端按 `coverageStart` 与 `meta.periodStart` 比，自行写「未采集」/「只覆盖 N 天」；
+- **整期起点早于 `coverageStart` 时环比一律不出**（`deltaBlocked: "segment_partial_coverage"`），
+  比如 W42（10-12~10-18）早于 PC 段起点 10-19 —— 那期的 0 不是真值，拿它算环比必错。
+
 `ad_app + ad_pcebid == ad_total`，四个分段之和也等于 `ad_total`——两条恒等式都随单测钉住。
 `ad_app` / `ad_pcebid` 的 key 没变（前端不用改），只是换了取数列；老库没有分段列时退回
 `ad_views` / `pcebid_views` 并打 WARNING（值会偏，但不 500）。

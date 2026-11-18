@@ -1146,6 +1146,15 @@ def test_ad_segment_metrics(client):
     assert kpis["ad_pc_search"]["hasValue"] is True
     assert "未上线" in kpis["ad_pc_search"]["note"]
 
+    # 各段的采集起点：app/kw 段 10-13 起，PC 段 10-19 起；PC 搜索页源未上线 → 没有起点
+    assert kpis["ad_app"]["coverageStart"] == "2026-10-13"
+    assert kpis["ad_app_home"]["coverageStart"] == "2026-10-13"
+    assert kpis["ad_app_search"]["coverageStart"] == "2026-10-13"
+    assert kpis["ad_pcebid"]["coverageStart"] == "2026-10-19"
+    assert kpis["ad_pc_home"]["coverageStart"] == "2026-10-19"
+    assert "coverageStart" not in kpis["ad_pc_search"]
+    assert "coverageStart" not in kpis["ad_total"]      # 总量跨起点，没有单一「未采集」语义
+
     # 分段四格之和 = 广告曝光
     segment_sum = sum(
         kpis[key]["value"]
@@ -1156,3 +1165,30 @@ def test_ad_segment_metrics(client):
     # 新的四格不进 6 个主 KPI（主 KPI 仍是那 6 条）
     core_keys = {kpi["key"] for kpi in payload["coreKpis"]}
     assert "ad_app_home" not in core_keys and "ad_app_search" not in core_keys
+
+
+def test_segment_coverage_start_blocks_delta():
+    """整期早于指标采集起点时不给环比：W42（10-12~10-18）早于 PC 段起点 10-19。"""
+    from app.routers.periodic import MetricSpec, _build_kpi
+
+    series = {
+        "2026-41": {"pc": 0},
+        "2026-42": {"pc": 0},
+        "2026-43": {"pc": 279},
+    }
+    spec = MetricSpec("ad_pcebid", "pc", "PC 曝光", "次", coverage_start="2026-10-19")
+
+    w42 = _build_kpi(spec, "ad", series, "2026-42", list(series), 12, False)
+    assert w42["coverageStart"] == "2026-10-19"
+    assert w42["deltaBlocked"] == "segment_partial_coverage"
+    assert w42["deltaPct"] is None and w42["prevValue"] is None
+
+    # 起点之后（W43 起）正常出环比
+    w44 = {"2026-43": {"pc": 279}, "2026-44": {"pc": 460}}
+    kpi = _build_kpi(spec, "ad", w44, "2026-44", list(w44), 12, False)
+    assert kpi["deltaPct"] == pytest.approx(64.9, abs=0.05)
+    assert "deltaBlocked" not in kpi
+
+    # 没有 coverage_start 的指标不受影响
+    plain = MetricSpec("app_cnt", "pc", "投放游戏数", "款")
+    assert "deltaBlocked" not in _build_kpi(plain, "ad", w44, "2026-44", list(w44), 12, False)
