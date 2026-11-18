@@ -880,13 +880,27 @@ def _build_kpi(
       - coverage_partial      本期数据覆盖不全（如在线线 W45 只有 2 天）
       - prev_coverage_partial 上期覆盖不全，拿它当基数会算出一个假的涨幅
       - secondary_metric      副指标，本来就不出环比
+      - segment_not_collected 该指标这一段还没开始采（如 PC 曝光早于 2026-10-19）
+      - segment_partial_coverage 本期跨过该段的采集起点，占比系统性偏低
     """
+    period_start_text, period_end_text = _period_range(period_type, period_key)
+
+    def _collected(period: str) -> bool:
+        """该期是否已进入这一段的采集窗口。整期早于 coverageStart = 还没采，不是 0。"""
+        if not spec.coverage_start:
+            return True
+        return _period_range(period_type, period)[1] >= spec.coverage_start
+
+    current_collected = _collected(period_key)
     available = [
         period
         for period in periods
-        if _pick_value(series.get(period), spec.column, spec.is_int) is not None
+        if _collected(period)
+        and _pick_value(series.get(period), spec.column, spec.is_int) is not None
     ]
-    value = _pick_value(series.get(period_key), spec.column, spec.is_int)
+    # 还没开始采的期给 null，不给 0——「没采」与「采到 0」是两件事，
+    # 0 会被趋势线、导出、别人写的报表当成真值
+    value = _pick_value(series.get(period_key), spec.column, spec.is_int) if current_collected else None
     # 上期只在「该指标自己有数据」的期里取，避免拿 0 或空行算出假环比
     prior_available = [period for period in available if period < period_key]
     prior_key = prior_available[-1] if prior_available else None
@@ -914,12 +928,13 @@ def _build_kpi(
     # 该指标自己什么时候才开始有采集（如广告 PC 段 2026-10-19）：
     #   period_start < 起点 → 整期跨过起点（或整段早于起点），占比系统性偏低、环比不可比
     # 值仍然照给（前端按 coverageStart 写「未采集」），但环比一律不出，避免拿残缺期去比
-    period_start_text, _period_end = _period_range(period_type, period_key)
-    segment_starts_inside = (
-        spec.coverage_start is not None and period_start_text < spec.coverage_start
-    )
-    if segment_starts_inside and not delta_blocked:
-        delta_blocked = "segment_partial_coverage"
+    if spec.coverage_start and not current_collected:
+        if not delta_blocked:
+            delta_blocked = "segment_not_collected"
+    elif spec.coverage_start and period_start_text < spec.coverage_start:
+        # 跨过起点：只有部分天数有该段数据（如 W42 = 10-12~10-18，APP 段 10-13 才开始）
+        if not delta_blocked:
+            delta_blocked = "segment_partial_coverage"
 
     if delta_blocked:
         # 不可比：连上期值和环比一起置 null，避免前端又用 prevValue 自己算出假涨幅

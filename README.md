@@ -431,11 +431,15 @@ W46 `ad_views=5328` 里含 APP 首页 1799、APP 搜索 2656、PC 首页 873，�
 | `ad_pc_search` | 无（源还没上线，给日期就是编） |
 | `ad_total` | 无（总量跨起点，没有「整段未采集」这种语义） |
 
-两条行为：
+三条行为（关键：**那个 0 不给**，`value` 直接是 `null`）：
 
-- **值照给**，前端按 `coverageStart` 与 `meta.periodStart` 比，自行写「未采集」/「只覆盖 N 天」；
-- **整期起点早于 `coverageStart` 时环比一律不出**（`deltaBlocked: "segment_partial_coverage"`），
-  比如 W42（10-12~10-18）早于 PC 段起点 10-19 —— 那期的 0 不是真值，拿它算环比必错。
+| 情形 | `value` | `deltaBlocked` | 例 |
+|---|---|---|---|
+| 整期早于 `coverageStart` | **null**（`hasValue: false`，且不进 `availablePeriods` / `trend`） | `segment_not_collected` | W42 的 PC 曝光 |
+| 整期跨过 `coverageStart` | 照给（占比偏低） | `segment_partial_coverage` | W42 的 APP 曝光（10-13 起采，覆盖 6/7 天） |
+| 整期在 `coverageStart` 之后 | 照给 | 无 | W43 起的 PC 曝光 |
+
+`coverageStart` 字段本身照给，前端可以据此写「未采集」；但**不要再用 `value === 0` 判未采集**了。
 
 `ad_app + ad_pcebid == ad_total`，四个分段之和也等于 `ad_total`——两条恒等式都随单测钉住。
 `ad_app` / `ad_pcebid` 的 key 没变（前端不用改），只是换了取数列；老库没有分段列时退回

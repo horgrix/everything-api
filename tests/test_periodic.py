@@ -1180,8 +1180,11 @@ def test_segment_coverage_start_blocks_delta():
 
     w42 = _build_kpi(spec, "ad", series, "2026-42", list(series), 12, False)
     assert w42["coverageStart"] == "2026-10-19"
-    assert w42["deltaBlocked"] == "segment_partial_coverage"
+    # 整期早于起点：值是 null（不是 0），环比也不给
+    assert w42["value"] is None and w42["hasValue"] is False
+    assert w42["deltaBlocked"] == "segment_not_collected"
     assert w42["deltaPct"] is None and w42["prevValue"] is None
+    assert w42["availablePeriods"] == ["2026-43"]        # 更早的期不算「有该段数据」
 
     # 起点之后（W43 起）正常出环比
     w44 = {"2026-43": {"pc": 279}, "2026-44": {"pc": 460}}
