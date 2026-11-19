@@ -1195,3 +1195,35 @@ def test_segment_coverage_start_blocks_delta():
     # 没有 coverage_start 的指标不受影响
     plain = MetricSpec("app_cnt", "pc", "投放游戏数", "款")
     assert "deltaBlocked" not in _build_kpi(plain, "ad", w44, "2026-44", list(w44), 12, False)
+
+
+def test_players_have_no_delta_when_partial(client, monkeypatch):
+    """重点游戏（概览周表口径）在未走完的期也不出环比：W47「1 天 vs 整周」的 −77.7%。"""
+    from datetime import date
+
+    from app.routers import periodic
+
+    # 正常期（W46 已结束）：环比照给
+    players = {item["key"]: item for item in _report(client)["data"]["players"]}
+    torchlight = players["torchlight"]
+    assert torchlight["downloadPrev"] is not None
+    assert torchlight["downloadDeltaPct"] is not None
+    assert "deltaBlocked" not in torchlight
+
+    # 把「今天」放到 W46 中间，W46 就成了进行中的期
+    monkeypatch.setattr(periodic, "_today", lambda: date(2026, 11, 12))
+    periodic._CACHE.clear()
+    try:
+        partial_players = {
+            item["key"]: item for item in _report(client)["data"]["players"]
+        }
+        item = partial_players["torchlight"]
+        assert item["download"] is not None          # 数值照给
+        assert item["downloadPrev"] is None          # 上期值不给（否则能自己除出假跌幅）
+        assert item["downloadDeltaPct"] is None
+        assert item["avgOnlinePrev"] is None
+        assert item["avgOnlineDeltaPct"] is None
+        assert item["deltaBlocked"] == "current_in_progress"
+        assert item["downloadTrend"]                 # 迷你趋势保留
+    finally:
+        periodic._CACHE.clear()

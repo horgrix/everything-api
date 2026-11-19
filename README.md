@@ -277,6 +277,9 @@ curl 'http://127.0.0.1:8000/api/v09/data/periodic/report?period=weekly&key=2026-
   `dws_taptap_pc_online_peak_players_details_hourly` 回填，`is_active=1` 262/262 行非空）。
   列不存在时降级为 `NULL` 并发 warning，不会让整个榜单 400；值归一：`null` / `""` / `"NULL"`
   一律输出 `null`。下载榜仍有 82 行（W41~W44 已下线/从未采到）无 icon，前端保留首字兜底。
+- **重点游戏的环比同样遵守「不可比不给数」**：未走完的期 `downloadDeltaPct` / `avgOnlineDeltaPct`
+  与其上期值 `downloadPrev` / `avgOnlinePrev` 全为 `null`，带 `deltaBlocked: "current_in_progress"`；
+  本期值 `download` / `avgOnline` 与迷你趋势照给。（W47 只 1 天，拿它比 W46 整周会得 −77.7%）
 - **重点游戏带真图**：`players[].icon` / `players[].appId`，来自概览表
   `torchlight_icon` / `torchlight_app_id` / `heartopia_*`（后加列，列不存在或该期无值时为 `null`）。
 

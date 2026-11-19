@@ -1354,9 +1354,16 @@ def _build_breakdown(
 
 
 def _build_players(
-    overview: dict[str, dict[str, Any]], period_key: str, window: int
+    overview: dict[str, dict[str, Any]],
+    period_key: str,
+    window: int,
+    is_partial: bool = False,
 ) -> list[dict[str, Any]]:
-    """按游戏的重点指标（来源：概览周表）。"""
+    """按游戏的重点指标（来源：概览周表）。
+
+    `is_partial` 时环比一律不出：W47 只有 1 天（11-16），拿它比 W46 整周会得到 −77.7%
+    那种假跌幅。重点游戏这块走的是概览周表、独立算环比，很容易漏掉 kpis 那条规则。
+    """
     periods = sorted(overview)
     if period_key not in overview:
         return []
@@ -1368,9 +1375,14 @@ def _build_players(
     players = []
     for key, name, download_col, online_col in PLAYER_COLUMNS:
         download = _as_int(current.get(download_col))
-        download_prev = _as_int(previous.get(download_col)) if previous else None
         online = _as_float(current.get(online_col))
-        online_prev = _as_float(previous.get(online_col)) if previous else None
+        # 本期未走完：上期值与百分比都不给（否则谁都能拿 prev 自己除出同一个假跌幅）
+        download_prev = None if is_partial else (
+            _as_int(previous.get(download_col)) if previous else None
+        )
+        online_prev = None if is_partial else (
+            _as_float(previous.get(online_col)) if previous else None
+        )
         players.append(
             {
                 "key": key,
@@ -1384,6 +1396,9 @@ def _build_players(
                 "avgOnline": online,
                 "avgOnlinePrev": online_prev,
                 "avgOnlineDeltaPct": _ratio(online, online_prev),
+                **(
+                    {"deltaBlocked": "current_in_progress"} if is_partial else {}
+                ),
                 "downloadTrend": [
                     {"period": period, "value": _as_int(overview[period].get(download_col))}
                     for period in periods[-window:]
@@ -2293,7 +2308,7 @@ def report(
         },
         "coreKpis": core,
         "lines": line_payloads,
-        "players": _build_players(overview, period_key, window),
+        "players": _build_players(overview, period_key, window, is_partial),
         # 07 预约（2026-11-08 才上线；无覆盖的期回 available=false，不拿 0 充数）
         "reserve": _build_reserve(period, period_key, prev_period),
         # 数据质量标记（缺值、跨表不一致、未归类、异常放量）
